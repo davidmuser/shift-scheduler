@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generate Schedule</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div>
+                <h1>🎯 Generate Your Schedule</h1>
+                <p>Create the optimal schedule for your team</p>
+                {% if business_name %}
+                <div class="chip">Business: {{ business_name }} • Role: {{ user_role or 'Unknown' }}</div>
+                <div class="business-id-display">
+                    🆔 Business ID: <span id="scheduleBusinessId" class="business-id-value">--</span>
+                    <button class="copy-btn-small" onclick="copyScheduleBusinessId()" title="Copy Business ID">📋 Copy</button>
+                </div>
+                {% endif %}
+            </div>
+            <nav class="action-section">
+                <a href="/setup" class="btn btn-secondary">← Back to Setup</a>
+                <a href="/" class="btn btn-secondary">Home</a>
+            </nav>
+        </header>
+        <div id="sessionContext" data-business="{{ business_name or '' }}" data-role="{{ user_role or '' }}" style="display:none;"></div>
+        
+        <!-- Input Section -->
+        <section class="schedule-section input-section card">
+            <h2>⚙️ Schedule Settings</h2>
+
+            <div id="interestInfo" class="info-text hidden"></div>
+            
+            <form id="scheduleForm" class="form">
+                <div class="form-group">
+                    <label for="topK">Number of Solutions</label>
+                    <input type="number" id="topK" name="top_k" min="1" max="10" value="3">
+                    <small>How many different schedule options to generate</small>
+                </div>
+                
+                <h3>📊 Optimization Weights</h3>
+                <p class="info-text">Adjust how much the system should prioritize each factor:</p>
+                
+                <div class="weights-grid">
+                    <div class="weight-group">
+                        <label for="timeOffWeight">Respect Time-Off</label>
+                        <input type="range" id="timeOffWeight" name="time_off_request_weight" 
+                               min="0" max="20" value="10" class="slider">
+                        <span class="weight-value">10</span>
+                    </div>
+                    
+                    <div class="weight-group">
+                        <label for="seniorityWeight">Reward Senior Workers</label>
+                        <input type="range" id="seniorityWeight" name="seniority_reward_weight" 
+                               min="0" max="20" value="5" class="slider">
+                        <span class="weight-value">5</span>
+                    </div>
+                    
+                    <div class="weight-group">
+                        <label for="weekendWeight">Balance Weekends</label>
+                        <input type="range" id="weekendWeight" name="weekend_balance_weight" 
+                               min="0" max="20" value="8" class="slider">
+                        <span class="weight-value">8</span>
+                    </div>
+                    
+                    <div class="weight-group">
+                        <label for="skillWeight">Skill Matching</label>
+                        <input type="range" id="skillWeight" name="skill_matching_weight" 
+                               min="0" max="20" value="7" class="slider">
+                        <span class="weight-value">7</span>
+                    </div>
+                    
+                    <div class="weight-group">
+                        <label for="workloadWeight">Balance Workload</label>
+                        <input type="range" id="workloadWeight" name="workload_balance_weight" 
+                               min="0" max="20" value="6" class="slider">
+                        <span class="weight-value">6</span>
+                    </div>
+                    
+                    <div class="weight-group">
+                        <label for="payWeight">Minimize Cost</label>
+                        <input type="range" id="payWeight" name="compensation_minimization_weight" 
+                               min="0" max="20" value="2" class="slider">
+                        <span class="weight-value">2</span>
+                    </div>
+
+                    <div class="weight-group">
+                        <label for="overstaffingWeight">Avoid Overstaffing</label>
+                        <input type="range" id="overstaffingWeight" name="overstaffing_penalty_weight" 
+                               min="0" max="20" value="3" class="slider">
+                        <span class="weight-value">3</span>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-large btn-success">🚀 Generate Schedule</button>
+                </div>
+            </form>
+        </section>
+
+    <section id="workerInterestSection" class="schedule-section input-section card hidden">
+            <h2>🙋‍♀️ Shifts You Can Join</h2>
+            <p class="info-text">Tap "I'm interested" to be considered for a shift. You can withdraw anytime.</p>
+            <div id="workerShiftsList" class="items-list"></div>
+        </section>
+
+    <section id="managerInterestSection" class="schedule-section input-section card hidden">
+            <h2>📊 Interest Dashboard</h2>
+            <p class="info-text">See which shifts have interested workers before running the solver.</p>
+            <div id="managerInterestList" class="items-list"></div>
+        </section>
+        
+        <!-- Loading State -->
+        <div id="loadingState" class="schedule-section card loading-section hidden">
+            <div class="loading-spinner"></div>
+            <p>Creating optimal schedules... This may take a moment.</p>
+        </div>
+        
+        <!-- Results Section -->
+        <section id="resultsSection" class="schedule-section results-section card hidden">
+            <h2>✅ Generated Schedules</h2>
+            <p id="resultsSummary" class="info-text"></p>
+            
+            <!-- Solution selector: choose among top-k schedule options -->
+            <div id="solutionSelector" class="solution-selector hidden"></div>
+            
+            <div id="solutionsContainer" class="solutions-grid"></div>
+
+            <!-- Gantt chart container (per-solution charts inserted here) -->
+            <div id="ganttContainer" class="gantt-container"></div>
+            
+            <div class="result-actions">
+                <button id="toggleEditBtn" class="btn btn-secondary" type="button">✏️ Enable Editing</button>
+                <button id="publishBtn" class="btn btn-primary" type="button">📣 Publish Selected Schedule</button>
+                <button id="downloadBtn" class="btn btn-secondary">📥 Download as CSV</button>
+                <button id="newScheduleBtn" class="btn btn-primary">🔄 Create New Schedule</button>
+            </div>
+        </section>
+        
+        <!-- Error Section -->
+    <section id="errorSection" class="schedule-section error-box card hidden">
+            <h3>⚠️ Error</h3>
+            <p id="errorMessage"></p>
+            <button class="btn btn-secondary" onclick="location.href='/setup'">← Go Back to Setup</button>
+        </section>
+        
+        <!-- Secondary navigation (mobile-friendly) -->
+        <section class="action-section action-section-secondary">
+            <a href="/setup" class="btn btn-secondary">← Back to Setup</a>
+            <a href="/" class="btn btn-secondary">Home</a>
+        </section>
+    </div>
+    
+    <script>
+        // Copy business ID to clipboard
+        function copyScheduleBusinessId() {
+            const businessId = document.getElementById('scheduleBusinessId').textContent;
+            navigator.clipboard.writeText(businessId).then(() => {
+                alert('Business ID copied to clipboard!');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
+        
+        // Load business ID from stats endpoint
+        function loadScheduleBusinessId() {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('scheduleBusinessId').textContent = data.business_id;
+                })
+                .catch(error => console.error('Error loading business ID:', error));
+        }
+        
+        // Load business ID on page load
+        loadScheduleBusinessId();
+    </script>
+    <script src="{{ url_for('static', filename='schedule.js') }}"></script>
+</body>
+</html>

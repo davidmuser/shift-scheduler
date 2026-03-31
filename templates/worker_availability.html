@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Availability</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+    .availability-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 1rem;
+            gap: 1rem;
+        }
+        .availability-toolbar p {
+            margin: 0;
+            font-size: 0.9rem;
+            color: var(--text-muted-color);
+        }
+        .save-status {
+            font-size: 0.85rem;
+            color: var(--text-muted-color);
+            margin-left: 0.5rem;
+        }
+        .week-view {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        .day-column {
+            background-color: var(--surface-color);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            box-shadow: var(--shadow);
+        }
+        .day-header {
+            text-align: center;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .shift-card {
+            background-color: #f8f9fa;
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .shift-time {
+            font-weight: 500;
+        }
+        .shift-skills {
+            font-size: 0.85rem;
+            color: var(--text-muted-color);
+            margin-top: 0.25rem;
+        }
+        .interest-toggle {
+            margin-top: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+        .interest-toggle input {
+            width: 1.2em;
+            height: 1.2em;
+        }
+        .info-text {
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: var(--text-muted-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>My Weekly Availability</h1>
+            <a href="/setup" class="btn btn-secondary">Back to Dashboard</a>
+        </header>
+
+        {% if user_role == 'Worker' %}
+        <div class="availability-toolbar">
+            <p>Select the shifts you can work this week, then click "Save availability".</p>
+            <div>
+                <button id="saveAvailabilityButton" class="btn btn-primary">Save availability</button>
+                <span id="saveStatus" class="save-status"></span>
+            </div>
+        </div>
+        {% else %}
+        <p class="info-text">This is a read-only view of shifts for this week. Workers should log in with their own name to mark availability.</p>
+        {% endif %}
+
+        <div class="week-view" id="weekView">
+            <!-- Day columns will be injected by JavaScript -->
+        </div>
+
+        <section id="publishedSection" class="schedule-section card" style="margin-top: 2rem;">
+            <h2>Published Schedule</h2>
+            <p class="info-text" id="publishedSubtitle"></p>
+            <div id="publishedContent" class="items-list"></div>
+        </section>
+    </div>
+
+    <script>
+        const USER_ROLE = "{{ user_role }}";
+
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchShiftsAndRenderCalendar();
+
+            if (USER_ROLE === 'Worker') {
+                const saveBtn = document.getElementById('saveAvailabilityButton');
+                if (saveBtn) {
+                    saveBtn.addEventListener('click', saveAllAvailability);
+                }
+            }
+        });
+
+        async function fetchShiftsAndRenderCalendar() {
+            try {
+                const [availabilityResponse, publishedResponse] = await Promise.all([
+                    fetch('/api/shifts/availability'),
+                    fetch('/api/published-schedule')
+                ]);
+
+                if (!availabilityResponse.ok) {
+                    throw new Error('Failed to fetch shift data.');
+                }
+                const availabilityData = await availabilityResponse.json();
+                renderCalendar(availabilityData);
+
+                if (publishedResponse.ok) {
+                    const publishedData = await publishedResponse.json();
+                    renderPublishedSchedule(publishedData);
+                }
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                document.getElementById('weekView').innerHTML = `<p style="color: var(--danger-color);">Error loading availability calendar.</p>`;
+            }
+        }
+
+        function renderCalendar(payload) {
+            const shiftsByDay = payload.shifts_by_day || {};
+            const workerInterests = payload.worker_interests || [];
+            const isLockedOverall = !!payload.is_locked;
+            const lockedStart = payload.locked_period_start;
+            const lockedEnd = payload.locked_period_end;
+
+            const weekView = document.getElementById('weekView');
+            weekView.innerHTML = '';
+            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+            // If the entire period is locked, surface a small notice near the toolbar
+            if (isLockedOverall) {
+                const toolbar = document.querySelector('.availability-toolbar');
+                if (toolbar && !document.getElementById('lockNotice')) {
+                    const notice = document.createElement('p');
+                    notice.id = 'lockNotice';
+                    notice.className = 'info-text';
+                    const rangeText = lockedStart && lockedEnd
+                        ? ` between ${lockedStart} and ${lockedEnd}`
+                        : '';
+                    notice.textContent = `A schedule has been published and is locked${rangeText}. You can no longer change availability for those shifts.`;
+                    toolbar.appendChild(notice);
+                }
+            }
+
+            days.forEach((day, index) => {
+                const dayColumn = document.createElement('div');
+                dayColumn.className = 'day-column';
+
+                const dayHeader = document.createElement('div');
+                dayHeader.className = 'day-header';
+                dayHeader.textContent = day;
+                dayColumn.appendChild(dayHeader);
+
+                const shifts = shiftsByDay[day] || [];
+                if (shifts.length === 0) {
+                    dayColumn.innerHTML += '<p class="empty-list">No shifts</p>';
+                } else {
+                    shifts.forEach(shift => {
+                        const isInterested = workerInterests.includes(shift.id);
+                        const isLocked = !!shift.is_locked;
+                        const shiftCard = document.createElement('div');
+                        shiftCard.className = 'shift-card';
+
+                        let toggleHtml = '';
+                        if (USER_ROLE === 'Worker') {
+                            const disabledAttr = isLocked ? 'disabled' : '';
+                            toggleHtml = `
+                                <div class="interest-toggle">
+                                    <input type="checkbox" id="shift-interest-${shift.id}" data-shift-id="${shift.id}" ${isInterested ? 'checked' : ''} ${disabledAttr}>
+                                    <label for="shift-interest-${shift.id}">I'm available</label>
+                                    ${isLocked ? '<span class="info-text">Locked by manager</span>' : ''}
+                                </div>
+                            `;
+                        }
+
+                        shiftCard.innerHTML = `
+                            <div class="shift-time">${shift.start_time} - ${shift.end_time}</div>
+                            <div class="shift-skills">Skills: ${shift.required_skills.join(', ') || 'None'}</div>
+                            ${toggleHtml}
+                        `;
+                        dayColumn.appendChild(shiftCard);
+                    });
+                }
+                weekView.appendChild(dayColumn);
+            });
+
+            // Add event listeners for checkboxes (workers only)
+            if (USER_ROLE === 'Worker') {
+                document.querySelectorAll('.interest-toggle input[type="checkbox"]').forEach(checkbox => {
+                    checkbox.addEventListener('change', handleInterestToggle);
+                });
+            }
+        }
+
+        function renderPublishedSchedule(payload) {
+            const section = document.getElementById('publishedSection');
+            const content = document.getElementById('publishedContent');
+            const subtitle = document.getElementById('publishedSubtitle');
+            if (!section || !content || !subtitle) return;
+
+            if (!payload || !payload.published) {
+                subtitle.textContent = 'No schedule has been published yet.';
+                content.innerHTML = '';
+                return;
+            }
+
+            const start = payload.period_start;
+            const end = payload.period_end;
+            const rangeText = start && end ? `for ${start} to ${end}` : '';
+            subtitle.textContent = `A schedule has been published ${rangeText}.`;
+
+            const assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
+            const currentWorkerId = payload.current_worker_id;
+
+            // Only consider assignments that are actually marked as assigned
+            const effectiveAssignments = assignments.filter(a => a && a.is_assigned !== false);
+
+            if (!effectiveAssignments.length) {
+                content.innerHTML = '<p class="info-text">No workers are assigned in the published schedule.</p>';
+                return;
+            }
+
+            if (USER_ROLE === 'Worker' && currentWorkerId != null) {
+                const myAssignments = effectiveAssignments
+                    .filter(a => String(a.worker_id) === String(currentWorkerId));
+
+                if (!myAssignments.length) {
+                    content.innerHTML = '<p class="info-text">You have no shifts in the published schedule for this period.</p>';
+                    return;
+                }
+
+                myAssignments.sort((a, b) => {
+                    const ad = String(a.shift_date || '').localeCompare(String(b.shift_date || ''));
+                    if (ad !== 0) return ad;
+                    return String(a.shift_start || '').localeCompare(String(b.shift_start || ''));
+                });
+
+                const items = myAssignments.map(a => {
+                    const date = a.shift_date || '';
+                    const startTime = a.shift_start || '';
+                    const endTime = a.shift_end || '';
+                    return `<div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${date} • ${startTime}–${endTime}</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = items;
+            } else {
+                // Manager / read-only view: show all workers and their shifts
+                const byWorker = {};
+                effectiveAssignments.forEach(a => {
+                    if (!a.worker_name && a.worker_id == null) return;
+                    const key = a.worker_name || `Worker #${a.worker_id}`;
+                    if (!byWorker[key]) byWorker[key] = [];
+                    byWorker[key].push(a);
+                });
+
+                const workerNames = Object.keys(byWorker).sort();
+                const blocks = workerNames.map(name => {
+                    const items = byWorker[name]
+                        .sort((a, b) => {
+                            const ad = String(a.shift_date || '').localeCompare(String(b.shift_date || ''));
+                            if (ad !== 0) return ad;
+                            return String(a.shift_start || '').localeCompare(String(b.shift_start || ''));
+                        })
+                        .map(a => {
+                            const date = a.shift_date || '';
+                            const startTime = a.shift_start || '';
+                            const endTime = a.shift_end || '';
+                            return `<li>${date} • ${startTime}–${endTime}</li>`;
+                        }).join('');
+
+                    return `<div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${name}</div>
+                            <ul class="info-text">${items}</ul>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = blocks;
+            }
+        }
+
+        async function handleInterestToggle(event) {
+            if (USER_ROLE !== 'Worker') {
+                return;
+            }
+            const shiftId = event.target.dataset.shiftId;
+            const isInterested = event.target.checked;
+
+            try {
+                const response = await fetch('/api/shifts/interest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        shift_id: shiftId,
+                        interested: isInterested
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to update availability.');
+                }
+                // Optionally show a success notification
+            } catch (error) {
+                console.error('Error updating availability:', error);
+                event.target.checked = !isInterested; // Revert checkbox on error
+                alert('There was an error updating your availability.');
+            }
+        }
+
+        async function saveAllAvailability() {
+            if (USER_ROLE !== 'Worker') {
+                return;
+            }
+            const saveStatus = document.getElementById('saveStatus');
+            if (saveStatus) {
+                saveStatus.textContent = 'Saving...';
+            }
+
+            const checkboxes = document.querySelectorAll('.interest-toggle input[type="checkbox"]');
+            try {
+                const requests = [];
+                checkboxes.forEach(cb => {
+                    const shiftId = cb.dataset.shiftId;
+                    const isInterested = cb.checked;
+                    requests.push(fetch('/api/shifts/interest', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            shift_id: shiftId,
+                            interested: isInterested
+                        })
+                    }));
+                });
+
+                const responses = await Promise.all(requests);
+                const anyError = responses.some(r => !r.ok);
+                if (anyError) {
+                    if (saveStatus) {
+                        saveStatus.textContent = 'Some shifts could not be saved.';
+                    }
+                    console.error('One or more availability updates failed when saving all.');
+                } else {
+                    if (saveStatus) {
+                        saveStatus.textContent = 'Availability saved.';
+                    }
+                }
+            } catch (error) {
+                console.error('Error saving availability:', error);
+                if (saveStatus) {
+                    saveStatus.textContent = 'Error saving availability.';
+                }
+            }
+        }
+    </script>
+</body>
+</html>

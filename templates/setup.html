@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shift Scheduler Setup</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div>
+                <h1>{% if user_role == 'Manager' %}👨‍💼 Manager Dashboard{% else %}📅 Your Shifts{% endif %}</h1>
+                {% if business_name %}
+                <p>Business: {{ business_name }} | Role: {{ user_role or 'Unknown' }}</p>
+                {% if user_role == 'Manager' %}
+                <div style="font-size: 0.9rem; color: var(--text-muted-color);">
+                    <span>ID: <strong id="setupBusinessId" style="font-family: monospace;">--</strong></span>
+                    <button class="copy-btn-small" onclick="copyToClipboard('setupBusinessId', 'Business ID')" title="Copy Business ID">📋</button>
+                    <span style="margin-left: 1rem;">Number: <strong id="setupBusinessNumber" style="font-family: monospace;">--</strong></span>
+                    <button class="copy-btn-small" onclick="copyToClipboard('setupBusinessNumber', 'Business Number')" title="Copy Business Number">📋</button>
+                </div>
+                {% endif %}
+                {% endif %}
+            </div>
+            <button onclick="logout()" class="btn btn-secondary">Logout</button>
+        </header>
+
+        <div id="sessionContext" data-business="{{ business_name or '' }}" data-role="{{ user_role or '' }}" style="display:none;"></div>
+
+        <main class="main-content">
+            <!-- LEFT COLUMN (FORMS) -->
+            <div class="form-column">
+                {% if user_role == 'Manager' %}
+                <!-- Add Worker Form -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>👥 Add Worker</h2>
+                    </div>
+                    <form id="workerForm">
+                        <div class="form-group">
+                            <label for="workerName">Worker Name *</label>
+                            <input type="text" id="workerName" name="name" class="form-control" placeholder="e.g., John Smith" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="staffId">Worker Number</label>
+                            <input type="number" id="staffId" name="staff_id" class="form-control" placeholder="e.g., 1001">
+                        </div>
+                        <div class="form-group">
+                            <label for="seniority">Seniority Level</label>
+                            <select id="seniority" name="seniority_level" class="form-control">
+                                <option value="1">Entry Level</option>
+                                <option value="2">Junior</option>
+                                <option value="3">Senior</option>
+                                <option value="4">Lead</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="hourlyRate">Hourly Rate ($)</label>
+                            <input type="number" id="hourlyRate" name="hourly_rate" class="form-control" min="5" step="0.50" value="20.00">
+                        </div>
+                        <div class="form-group">
+                            <label for="skills">Skills (comma-separated)</label>
+                            <input type="text" id="skills" name="skills" class="form-control" placeholder="e.g., cash handling, customer service">
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%;">Add Worker</button>
+                    </form>
+                </div>
+
+                <!-- Create Shift Form -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>📅 Create Shift</h2>
+                    </div>
+                    <form id="shiftForm">
+                        <div class="form-group">
+                            <label for="shiftDate">Date</label>
+                            <input type="date" id="shiftDate" name="date" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="shiftStart">Start Time</label>
+                            <input type="time" id="shiftStart" name="start_time" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="shiftEnd">End Time</label>
+                            <input type="time" id="shiftEnd" name="end_time" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="requiredWorkers">Workers Needed</label>
+                            <input type="number" id="requiredWorkers" name="required_workers" class="form-control" min="1" value="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="requiredSkills">Required Skills (comma-separated)</label>
+                            <input type="text" id="requiredSkills" name="required_skills" class="form-control" placeholder="e.g., cash handling">
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%;">Create Shift</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- RIGHT COLUMN (LISTS) -->
+            <div class="list-column">
+                {% if user_role == 'Manager' %}
+                <!-- Workers List -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Team Members (<span id="managerWorkerCount">0</span>)</h2>
+                    </div>
+                    <div id="workersListContent" class="list-container">
+                        <p class="empty-list">No workers added yet.</p>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Shifts List -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>{% if user_role == 'Manager' %}Shifts Created (<span id="managerShiftCount">0</span>){% else %}Available Shifts{% endif %}</h2>
+                    </div>
+                    <div id="shiftsListContent" class="list-container">
+                        <p class="empty-list">No shifts created yet.</p>
+                    </div>
+                </div>
+
+                {% if user_role == 'Manager' %}
+                <!-- Action Buttons -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Actions</h2>
+                    </div>
+                    <div class="action-section">
+                        <a href="/" class="btn btn-secondary">← Back Home</a>
+                        <button id="clearAllBtn" class="btn btn-danger">🗑️ Clear All</button>
+                        <a href="/schedule" class="btn btn-primary" id="proceedBtn" disabled>✅ Generate Schedule</a>
+                    </div>
+                </div>
+                {% else %}
+                <div class="action-section">
+                    <a href="/" class="btn btn-secondary">← Back Home</a>
+                </div>
+                {% endif %}
+            </div>
+        </main>
+    </div>
+
+    <script>
+        function copyToClipboard(elementId, entityName) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                showNotification(`${entityName} copied to clipboard!`, 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showNotification(`Failed to copy ${entityName}.`, 'error');
+            });
+        }
+
+        function loadBusinessInfo() {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    const userRole = document.getElementById('sessionContext').dataset.role;
+                    if (userRole === 'Manager') {
+                        document.getElementById('setupBusinessId').textContent = data.business_id;
+                        document.getElementById('setupBusinessNumber').textContent = data.business_number;
+                        document.getElementById('managerWorkerCount').textContent = data.total_workers;
+                        document.getElementById('managerShiftCount').textContent = data.total_shifts;
+                    }
+                })
+                .catch(error => console.error('Error loading business info:', error));
+        }
+
+        document.addEventListener('DOMContentLoaded', loadBusinessInfo);
+    </script>
+    <script src="{{ url_for('static', filename='setup.js') }}"></script>
+</body>
+</html>
