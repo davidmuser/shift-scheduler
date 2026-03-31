@@ -10,4 +10,4 @@ jobs:
       - name: Push to HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push --force https://your-username:$HF_TOKEN@huggingface.co/spaces/your-username/your-space-name main
+        run: git push --force https://Davemb:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/Davemb/shift-scheduler main
