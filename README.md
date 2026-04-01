@@ -33,9 +33,9 @@ Expert-level shift scheduling backend using Google OR-Tools CP-SAT solver with d
   - Minimize compensation costs
 
 - **Top-k Solutions**: Returns multiple high-quality solutions for user selection
-  - Uses `CpSolverSolutionCallback` for iterative solution collection
-  - Rank solutions by objective value
-  - Compare different scheduling options
+    - Uses iterative re-solving with no-good constraints to collect distinct schedules
+    - Ranks solutions by objective value
+    - Lets users compare and choose between different scheduling options
 
 ### Architecture
 
@@ -87,7 +87,15 @@ pip install -r requirements-dev.txt
 ### As a Library
 
 ```python
-from src.models.data_models import Worker, Shift, SchedulingRequest, ObjectiveWeights, Skill, SkillLevel
+from src.models.data_models import (
+    Worker,
+    Shift,
+    SchedulingRequest,
+    ObjectiveWeights,
+    Skill,
+    SkillLevel,
+    WorkerPreference,
+)
 from src.solver.core_solver import ShiftSchedulingSolver
 
 # Create workers
@@ -157,15 +165,14 @@ python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 2. **Example API Call**
 ```bash
-curl -X POST "http://localhost:8000/schedule" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workers": [...],
-    "shifts": [...],
-    "scheduling_period_start": "2026-04-01",
-    "scheduling_period_end": "2026-04-30"
-  }' \
-  -G -d "top_k=5&timeout_seconds=60"
+curl -X POST "http://localhost:8000/schedule?top_k=5&timeout_seconds=60" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "workers": [...],
+        "shifts": [...],
+        "scheduling_period_start": "2026-04-01",
+        "scheduling_period_end": "2026-04-30"
+    }'
 ```
 
 ## API Endpoints
@@ -275,7 +282,7 @@ The objective function is dynamically weighted based on UI inputs:
 ### Solver: Google OR-Tools CP-SAT
 - **Type**: Constraint Programming with Satisfiability (SAT) solving
 - **Performance**: Handles large-scale combinatorial optimization
-- **Top-k Collection**: Uses `CpSolverSolutionCallback` to collect multiple high-quality solutions
+- **Top-k Collection**: Iteratively re-solves the model with no-good constraints to collect multiple high-quality, distinct solutions
 - **Timeout**: Configurable solver runtime limit
 
 ### Solution Quality Ranking
@@ -362,10 +369,6 @@ mypy src/
 - Ensure all worker/shift IDs are unique
 - Check date formats (ISO format: YYYY-MM-DD)
 - Verify time formats (HH:MM format)
-
-## License
-
-MIT License - See LICENSE file for details
 
 ## References
 
