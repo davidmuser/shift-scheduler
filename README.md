@@ -1,9 +1,16 @@
+---
+title: Shift Scheduler
+emoji: 🗓️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
 
 # Shift Scheduler SaaS
+# Shift Scheduling Backend System
 
-Expert-level shift scheduling backend using Google OR-Tools CP-SAT solver with dynamic soft constraints and top-k solutions.
-
-## Features
+Shift scheduling backend using Google OR-Tools CP-SAT solver with dynamic soft constraints and top-k solutions.
 
 ### Core Capabilities
 - **CP-SAT Solver Integration**: Uses Google OR-Tools Constraint Programming SAT solver for optimal solution finding
