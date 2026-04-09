@@ -10,3 +10,9 @@ SQLAlchemy>=2.0.0
 psycopg2-binary>=2.9.0
 sqlalchemy
 gunicorn
+flask
+flask-jwt-extended
+psycopg2-binary
+python-dotenv
+sqlalchemy
+pydantic

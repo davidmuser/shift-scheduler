@@ -3,6 +3,9 @@
 // Keep the last batch of solutions so we can switch between k variations
 let LAST_SOLUTIONS = [];
 let SELECTED_SOLUTION_INDEX = 0;
+let CURRENT_SCHEDULE_ID = null;
+let CURRENT_SCHEDULE_STATUS = 'Draft';
+
 // Start with editing enabled so managers can immediately tweak assignments
 // on generated schedules without having to toggle a separate mode.
 let EDIT_MODE = true;
@@ -21,6 +24,7 @@ const SESSION_CONTEXT = {
 // Initialize interest sections after DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     refreshInterestSections();
+    loadPublishedScheduleStatus();
 });
 
 // Update weight value display when slider changes
@@ -154,6 +158,71 @@ async function toggleInterest(shiftId, currentlyInterested) {
     }
 }
 
+async function loadPublishedScheduleStatus() {
+    const statusSection = document.getElementById('publishedStatusSection');
+    const statusInfo = document.getElementById('publishedScheduleInfo');
+    const unpublishBtn = document.getElementById('unpublishBtn');
+
+    if (!statusSection || !statusInfo) return;
+
+    try {
+        const resp = await fetch('/api/published-schedule');
+        if (!resp.ok) {
+            statusSection.classList.add('hidden');
+            return;
+        }
+
+        const data = await resp.json();
+        if (!data.published) {
+            statusSection.classList.add('hidden');
+            return;
+        }
+
+        // Show the published schedule status
+        statusSection.classList.remove('hidden');
+        
+        const startDate = new Date(data.period_start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const endDate = new Date(data.period_end).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        
+        const statusText = data.is_locked ? '🔒 LOCKED' : '📋 Published';
+        statusInfo.innerHTML = `<strong>${statusText}</strong> • Period: ${startDate} to ${endDate} • Solution rank: ${data.solution_rank || 'N/A'} • Objective: ${data.objective_value ? data.objective_value.toFixed(2) : 'N/A'}`;
+
+        // Wire up unpublish button
+        if (unpublishBtn && SESSION_CONTEXT.role === 'Manager') {
+            unpublishBtn.onclick = unpublishSchedule;
+        }
+    } catch (err) {
+        console.error('Load published schedule status failed', err);
+        statusSection.classList.add('hidden');
+    }
+}
+
+async function unpublishSchedule() {
+    if (!confirm('Are you sure you want to unpublish the current schedule? Workers will be able to change their availability again.')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/published-schedule', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert(err.error || 'Failed to unpublish schedule');
+            return;
+        }
+
+        alert('Schedule unpublished successfully.');
+        // Reload the published status section
+        await loadPublishedScheduleStatus();
+    } catch (err) {
+        console.error('Unpublish failed', err);
+        alert('Could not unpublish schedule.');
+    }
+}
+
 // Handle schedule form submission
 document.getElementById('scheduleForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -195,7 +264,7 @@ document.getElementById('scheduleForm').addEventListener('submit', async (e) => 
         
     } catch (error) {
         console.error('Error generating schedule:', error);
-        showError(error.message);
+        showError('An error occurred while generating the schedule. Please try again.');
     } finally {
         // Hide loading state
         document.getElementById('loadingState').classList.add('hidden');
@@ -209,6 +278,9 @@ function displayResults(data) {
     ALL_WORKERS = Array.isArray(data.workers) ? data.workers : [];
     INTERESTED_BY_SHIFT = data.interested_by_shift || {};
     SELECTED_SOLUTION_INDEX = 0;
+    CURRENT_SCHEDULE_ID = data.schedule_id;
+    updateScheduleStatus(data.status || 'Draft');
+
 
     // Show results section
     document.getElementById('resultsSection').classList.remove('hidden');
@@ -216,9 +288,10 @@ function displayResults(data) {
     
     // Update summary
     const summary = data.summary;
+    const messageText = summary.message ? `<br><span style="color: #ff9800; font-weight: 500;">${summary.message}</span>` : '';
     document.getElementById('resultsSummary').innerHTML = `
         ✅ Successfully generated <strong>${LAST_SOLUTIONS.length}</strong> schedule options 
-        for <strong>${summary.total_workers}</strong> workers and <strong>${summary.total_shifts}</strong> shifts
+        for <strong>${summary.total_workers}</strong> workers and <strong>${summary.total_shifts}</strong> shifts${messageText}
     `;
 
     // Build solution selector pills so managers can quickly compare k options
@@ -266,11 +339,18 @@ function buildWorkerOptionsMarkup(shiftId, currentWorkerId) {
     const sidStr = String(shiftId || '');
     const interestedRaw = INTERESTED_BY_SHIFT[sidStr] || INTERESTED_BY_SHIFT[shiftId] || [];
     const interestedSet = new Set(interestedRaw.map(v => String(v)));
+    const hasInterestedWorkers = interestedSet.size > 0;
 
     let options = '';
     options += '<option value="">-- keep as is --</option>';
     options += '<option value="__unresolved">Unresolved (no one assigned)</option>';
     options += '<option value="__unresolved_with_comment">Unresolved with comment…</option>';
+
+    // If no workers are interested, add a separator and empty option
+    if (!hasInterestedWorkers) {
+        options += '<option value="" disabled>─────────────────</option>';
+        options += '<option value="" disabled style="color: #999;">⚠️ No workers interested - select manually:</option>';
+    }
 
     ALL_WORKERS.forEach(w => {
         const widStr = String(w.id);
@@ -313,6 +393,30 @@ function setSelectedSolution(index) {
     }
 }
 
+function updateScheduleStatus(newStatus) {
+    CURRENT_SCHEDULE_STATUS = newStatus;
+    const statusControls = document.getElementById('scheduleStatusControls');
+    const statusBadge = document.getElementById('currentScheduleStatus');
+    const publishBtn = document.getElementById('publishBtn');
+    const lockBtn = document.getElementById('lockBtn');
+    const unlockBtn = document.getElementById('unlockBtn');
+
+    if (!statusControls || !statusBadge || !publishBtn || !lockBtn || !unlockBtn) return;
+
+    statusControls.classList.remove('hidden');
+    statusBadge.textContent = newStatus;
+    statusBadge.className = `status-badge status-${newStatus.toLowerCase()}`;
+
+    publishBtn.classList.toggle('hidden', newStatus !== 'Draft');
+    lockBtn.classList.toggle('hidden', newStatus !== 'Published');
+    unlockBtn.classList.toggle('hidden', newStatus !== 'Locked');
+}
+
+// Note: Publishing schedules is handled through /api/schedule/publish endpoint
+// in the results section. The status control buttons are for display only.
+// Actual publishing happens when the user clicks "Publish Selected Schedule"
+// button in the results section.
+
 // Build a nicely grouped card for a single solution, organized by day
 function renderSolutionDetailCard(solution) {
     const assignments = Array.isArray(solution.assignments) ? [...solution.assignments] : [];
@@ -339,12 +443,18 @@ function renderSolutionDetailCard(solution) {
             const sid = assignment.shift_id || '';
             const sidStr = String(sid);
             const unresolvedComment = (solution._unresolvedComments && solution._unresolvedComments[sidStr]) || '';
+            
+            // Check if no workers are interested in this shift
+            const interestedRaw = INTERESTED_BY_SHIFT[sidStr] || INTERESTED_BY_SHIFT[sid] || [];
+            const hasInterestedWorkers = interestedRaw.length > 0;
+            const noInterestWarning = !hasInterestedWorkers ? '<div style="background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px; margin-bottom: 8px; color: #856404; font-size: 0.9em;"><strong>⚠️ No workers interested in this shift</strong> - Manually select a worker below</div>' : '';
 
             return `
                 <div class="assignment-item ${assignment.is_assigned ? 'assigned' : 'not-assigned'}" 
                      data-worker-id="${assignment.worker_id || ''}" 
                      data-worker-name="${assignment.worker_name || ''}" 
                      data-shift-id="${sid}">
+                    ${noInterestWarning}
                     <div class="assignment-main">
                         <span class="assignment-worker">${assignment.worker_name}</span>
                         <span class="assignment-status-pill">${assignment.is_assigned ? 'Assigned' : 'Not assigned'}</span>

@@ -27,6 +27,27 @@
         </header>
         <div id="sessionContext" data-business="{{ business_name or '' }}" data-role="{{ user_role or '' }}" style="display:none;"></div>
         
+        <!-- Current Published Schedule Status -->
+        <div id="publishedStatusSection" class="card hidden" style="background-color: #f0f8ff; border-left: 4px solid #1e88e5; margin-bottom: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                <div>
+                    <h3 style="margin: 0 0 0.5rem 0; color: #1e88e5;">📅 Current Published Schedule</h3>
+                    <p id="publishedScheduleInfo" style="margin: 0; font-size: 0.95rem; color: #333;"></p>
+                </div>
+                <button id="unpublishBtn" class="btn btn-danger" style="white-space: nowrap;">Unpublish Schedule</button>
+            </div>
+        </div>
+
+        <div id="scheduleStatusControls" class="card hidden" style="display: none;">
+            <h2>🗓️ Schedule Status</h2>
+            <div class="status-bar">
+                <span id="currentScheduleStatus" class="status-badge status-draft">Draft</span>
+                <div class="status-actions">
+                    <!-- Status controls are informational only; actual publishing done via results section button -->
+                </div>
+            </div>
+        </div>
+
         <!-- Input Section -->
         <section class="schedule-section input-section card">
             <h2>⚙️ Schedule Settings</h2>

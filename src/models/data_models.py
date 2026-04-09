@@ -90,7 +90,7 @@ class WorkerPreference(BaseModel):
 class Worker(BaseModel):
     """Represents a worker (nurse, staff member, etc.) in the scheduling system."""
     id: int = Field(..., description="Unique identifier for the worker")
-    business_id: Optional[int] = Field(None, description="Business (tenant) id")
+    business_id: int = Field(..., description="Business (tenant) id")
     name: str = Field(..., description="Full name of the worker")
     seniority_level: int = Field(
         default=0, description="Seniority level (0=junior, higher=more senior)"
@@ -130,7 +130,7 @@ class Worker(BaseModel):
 class Shift(BaseModel):
     """Represents a shift that needs to be staffed."""
     id: int = Field(..., description="Unique identifier for the shift")
-    business_id: Optional[int] = Field(None, description="Business (tenant) id")
+    business_id: int = Field(..., description="Business (tenant) id")
     date: str = Field(..., description="Date of the shift (ISO format, YYYY-MM-DD)")
     start_time: str = Field(..., description="Start time (HH:MM format)")
     end_time: str = Field(..., description="End time (HH:MM format)")
@@ -168,14 +168,70 @@ class ShiftInterest(BaseModel):
     business_id: int = Field(..., description="Business (tenant) id")
 
 
+class ScheduleStatus(str, Enum):
+    """Overall status of a schedule."""
+    DRAFT = "Draft"
+    PUBLISHED = "Published"
+    LOCKED = "Locked"
+
+
+class ScheduleAssignment(BaseModel):
+    """Represents a single worker-shift assignment in a schedule solution."""
+    worker_id: Optional[int] = Field(default=None, description="ID of the assigned worker")
+    worker_name: Optional[str] = Field(default=None, description="Name of the assigned worker")
+    shift_id: int = Field(..., description="ID of the shift")
+    shift_date: str = Field(..., description="Date of the shift (YYYY-MM-DD)")
+    shift_start: str = Field(..., description="Start time of the shift (HH:MM)")
+    shift_end: str = Field(..., description="End time of the shift (HH:MM)")
+    is_assigned: bool = Field(default=True, description="Whether the assignment is active")
+
+
+class Schedule(BaseModel):
+    """Represents a saved or published schedule."""
+    id: Optional[int] = Field(default=None, description="Primary key for the schedule")
+    business_id: int = Field(..., description="Business (tenant) id")
+    name: str = Field(..., description="Human-readable name for the schedule (e.g., 'Week 15 Schedule')")
+    start_date: str = Field(..., description="Start date of the scheduling period (ISO format)")
+    end_date: str = Field(..., description="End date of the scheduling period (ISO format)")
+    status: ScheduleStatus = Field(default=ScheduleStatus.DRAFT, description="Publication status of the schedule")
+    assignments: List[ScheduleAssignment] = Field(..., description="The full assignment dictionary from the solver")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of creation")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of last update")
+
+
 class SchedulingRequest(BaseModel):
     """Main request object for the scheduling API."""
+    business_id: int = Field(..., description="Business (tenant) id for this request")
     workers: List[Worker] = Field(..., description="List of available workers")
     shifts: List[Shift] = Field(..., description="List of shifts to be scheduled")
     scheduling_period_start: str = Field(..., description="Start date (ISO format)")
     scheduling_period_end: str = Field(..., description="End date (ISO format)")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata")
 
+    @field_validator("shifts")
+    @classmethod
+    def validate_shifts_belong_to_business(cls, v: List[Shift], values) -> List[Shift]:
+        """Ensure all shifts belong to the same business as the request."""
+        if "business_id" not in values.data:
+            return v
+        business_id = values.data["business_id"]
+        for shift in v:
+            if shift.business_id != business_id:
+                raise ValueError(f"Shift {shift.id} does not belong to business {business_id}")
+        return v
+
+    @field_validator("workers")
+    @classmethod
+    def validate_workers_belong_to_business(cls, v: List[Worker], values) -> List[Worker]:
+        """Ensure all workers belong to the same business as the request."""
+        if "business_id" not in values.data:
+            return v
+        business_id = values.data["business_id"]
+        for worker in v:
+            if worker.business_id != business_id:
+                raise ValueError(f"Worker {worker.id} does not belong to business {business_id}")
+        return v
+        
     @field_validator("workers")
     @classmethod
     def validate_unique_worker_ids(cls, v: List[Worker]) -> List[Worker]:
@@ -194,12 +250,19 @@ class SchedulingRequest(BaseModel):
             raise ValueError("Duplicate shift IDs detected")
         return v
 
+class SchedulingSolution(BaseModel):
+    """Represents one complete scheduling solution from the solver."""
+    rank: int = Field(..., description="Rank of this solution (1 is best)")
+    objective_value: float = Field(..., description="Solver's objective function value")
+    assignments: List[ScheduleAssignment] = Field(..., description="List of assignments")
 
-class ScheduleAssignment(BaseModel):
-    """Represents a single worker-shift assignment."""
-    worker_id: int = Field(..., description="ID of the assigned worker")
-    shift_id: int = Field(..., description="ID of the assigned shift")
-    is_assigned: bool = Field(default=True, description="Whether the assignment is active")
+
+class SchedulingResponse(BaseModel):
+    """Response object containing multiple scheduling solutions."""
+    solutions: List[SchedulingSolution] = Field(..., description="List of top-k solutions")
+    summary: Dict[str, Any] = Field(..., description="Summary statistics")
+    workers: List[Worker] = Field(..., description="List of workers for UI rendering")
+    interested_by_shift: Dict[str, List[int]] = Field(..., description="Map of shift_id to interested worker_ids")
 
 
 class ObjectiveWeights(BaseModel):
@@ -236,23 +299,3 @@ class ObjectiveWeights(BaseModel):
         if v < 0:
             raise ValueError("All weights must be non-negative")
         return v
-
-
-class SchedulingSolution(BaseModel):
-    """Represents a complete scheduling solution."""
-    assignments: List[ScheduleAssignment] = Field(..., description="List of all assignments")
-    objective_value: float = Field(..., description="Objective value of this solution")
-    solution_rank: int = Field(default=1, description="Rank in top-k solutions (1=best)")
-    solver_status: str = Field(default="OPTIMAL", description="Solver status (OPTIMAL, FEASIBLE, etc.)")
-    computation_time_seconds: float = Field(
-        default=0.0, description="Time taken to generate this solution"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata")
-
-
-class SchedulingResponse(BaseModel):
-    """Response containing top-k solutions."""
-    solutions: List[SchedulingSolution] = Field(..., description="Top-k scheduling solutions")
-    total_solutions_found: int = Field(..., description="Total number of solutions found")
-    total_computation_time_seconds: float = Field(..., description="Total computation time")
-    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata")

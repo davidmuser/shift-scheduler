@@ -129,11 +129,11 @@ class ShiftSchedulingSolver:
             self._create_variables(request)
             self._add_constraints(request)
             self._set_objective(request, objective_weights)
-            
-            solutions = self._solve_and_collect_top_k(request)
-            
+
+            solutions = self._solve_and_collect_top_k()
+
             elapsed = time.time() - start_time
-            
+
             return self._build_response(request, solutions, elapsed)
         
         except Exception as e:
@@ -174,6 +174,8 @@ class ShiftSchedulingSolver:
         Args:
             request: The scheduling request
         """
+        if self.model is None:
+            raise ValueError("Model is not created.")
         self.assignments = {}
         self.shift_coverage = {}
 
@@ -196,7 +198,7 @@ class ShiftSchedulingSolver:
 
         for shift in request.shifts:
             max_cover = len(allowed_by_shift.get(shift.id, [])) or len(request.workers)
-            self.shift_coverage[shift.id] = self.model.NewIntVar(
+            self.shift_coverage[shift.id] = self.model.NewIntVar( # type: ignore
                 0,
                 max_cover,
                 f"coverage_shift_{shift.id}",
@@ -207,7 +209,7 @@ class ShiftSchedulingSolver:
                 if allowed_pairs is not None and (worker.id, shift.id) not in allowed_pairs:
                     # Disallow this combination by skipping variable creation
                     continue
-                var = self.model.NewBoolVar(f"assign_worker_{worker.id}_shift_{shift.id}")
+                var = self.model.NewBoolVar(f"assign_worker_{worker.id}_shift_{shift.id}") # type: ignore
                 self.assignments[(worker.id, shift.id)] = var
 
     def _add_constraints(self, request: SchedulingRequest) -> None:
@@ -217,6 +219,8 @@ class ShiftSchedulingSolver:
         Args:
             request: The scheduling request
         """
+        if self.model is None:
+            raise ValueError("Model is not created.")
         constraint_handler = HardConstraintHandler(self.model)
         constraint_handler.apply_all_hard_constraints(
             request,
@@ -236,10 +240,12 @@ class ShiftSchedulingSolver:
             request: The scheduling request
             objective_weights: Weights for each soft constraint criterion
         """
+        if self.model is None:
+            raise ValueError("Model is not created.")
         objective_fn = DynamicObjectiveFunction(self.model, objective_weights)
         objective_fn.build_objective_function(request, self.assignments)
 
-    def _solve_and_collect_top_k(self, request: SchedulingRequest) -> List[Dict]:
+    def _solve_and_collect_top_k(self) -> List[Dict]:
         """
         Execute the solver and collect top-k solutions.
         
@@ -249,6 +255,7 @@ class ShiftSchedulingSolver:
         Returns:
             List of top-k solutions
         """
+        assert self.model is not None
         # Instead of relying only on a single search with a callback, we iteratively
         # find a solution, then add a "no-good" constraint to force the next
         # solution to differ in at least one assignment. This guarantees up to
@@ -294,10 +301,11 @@ class ShiftSchedulingSolver:
             if not diff_terms:
                 break
 
-            self.model.Add(sum(diff_terms) >= 1)
+            self.model.Add(sum(diff_terms) >= 1) # type: ignore
 
         # Sort by objective (best first) and return
         solutions.sort(key=lambda x: x["objective"])
+        return solutions[: self.top_k]
         return solutions[: self.top_k]
 
     def _build_response(
@@ -321,23 +329,66 @@ class ShiftSchedulingSolver:
         
         for rank, solution_data in enumerate(solutions, start=1):
             assignments = []
-            
+            worker_map = {w.id: w for w in request.workers}
+            shift_map = {s.id: s for s in request.shifts}
+
             for (worker_id, shift_id), value in solution_data["assignments"].items():
                 if value == 1:
-                    assignments.append(
-                        ScheduleAssignment(worker_id=worker_id, shift_id=shift_id)
-                    )
+                    worker = worker_map.get(worker_id)
+                    shift = shift_map.get(shift_id)
+                    if worker and shift:
+                        assignments.append(
+                            ScheduleAssignment(
+                                worker_id=worker_id,
+                                worker_name=worker.name,
+                                shift_id=shift_id,
+                                shift_date=shift.date,
+                                shift_start=shift.start_time,
+                                shift_end=shift.end_time,
+                                is_assigned=True
+                            )
+                        )
             
+            # Add unassigned shifts to the list for UI completeness
+            assigned_shift_ids = {a.shift_id for a in assignments}
+            for shift in request.shifts:
+                if shift.id not in assigned_shift_ids:
+                    assignments.append(
+                        ScheduleAssignment(
+                            worker_id=None,
+                            worker_name="Unassigned",
+                            shift_id=shift.id,
+                            shift_date=shift.date,
+                            shift_start=shift.start_time,
+                            shift_end=shift.end_time,
+                            is_assigned=False
+                        )
+                    )
+
             scheduling_solution = SchedulingSolution(
-                assignments=assignments,
+                rank=rank,
                 objective_value=solution_data["objective"],
-                solution_rank=rank,
-                computation_time_seconds=elapsed / len(solutions),
+                assignments=assignments,
             )
             scheduling_solutions.append(scheduling_solution)
         
+        # Prepare data for UI rendering
+        interested_by_shift = {}
+        if request.metadata and request.metadata.get("allowed_pairs"):
+            for w_id, s_id in request.metadata["allowed_pairs"]:
+                s_id_str = str(s_id)
+                if s_id_str not in interested_by_shift:
+                    interested_by_shift[s_id_str] = []
+                interested_by_shift[s_id_str].append(w_id)
+
         return SchedulingResponse(
             solutions=scheduling_solutions,
-            total_solutions_found=len(solutions),
-            total_computation_time_seconds=elapsed,
+            summary={
+                "total_solutions_found": len(solutions),
+                "total_computation_time_seconds": elapsed,
+                "total_workers": len(request.workers),
+                "total_shifts": len(request.shifts),
+            },
+            workers=request.workers,
+            interested_by_shift=interested_by_shift,
         )

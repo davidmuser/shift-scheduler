@@ -5,15 +5,43 @@ This module provides REST endpoints for scheduling requests and configuration.
 All comments are in English to prevent RTL rendering issues.
 """
 
-from typing import Optional
+from typing import Optional, Dict, List
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError, BaseModel
+from datetime import datetime
+
 from ..models.data_models import (
     SchedulingRequest,
     ObjectiveWeights,
     SchedulingResponse,
+    Worker,
+    Shift,
 )
 from ..solver.core_solver import ShiftSchedulingSolver
+from uuid import uuid4
+
+from uuid import uuid4
+
+
+
+# Pydantic models for request bodies
+class CreateWorkerRequest(BaseModel):
+    name: str
+    business_id: int
+    seniority_level: int = 1
+    skills: Optional[List[str]] = None
+    staff_id: Optional[str] = None
+    hourly_rate: Optional[float] = None
+
+class CreateShiftRequest(BaseModel):
+    name: str
+    business_id: int
+    start_time: datetime
+    end_time: datetime
+    required_workers: int = 1
+    required_skills: Optional[List[str]] = None
 
 
 def create_app() -> FastAPI:
@@ -29,15 +57,38 @@ def create_app() -> FastAPI:
         version="1.0.0",
     )
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        """
+        Custom exception handler for Pydantic validation errors.
+        
+        Formats the error into a user-friendly JSON response.
+        """
+        error_messages = []
+        for error in exc.errors():
+            field = " -> ".join(str(loc) for loc in error["loc"] if str(loc) not in ["body", "query"])
+            message = error["msg"]
+            error_messages.append(f"Validation error in field '{field}': {message}")
+        
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": "Your request could not be processed due to invalid data.", "errors": error_messages},
+        )
+
     # In-memory worker and shift template stores for demo (replace with DB in production)
-    workers_store = []
-    shift_templates_store = []
-    from uuid import uuid4
+    # Scoped by business_id
+    workers_store: Dict[int, List] = {}
+    worker_id_counters: Dict[int, int] = {}  # business_id -> next worker id
+    shift_templates_store: Dict[int, List] = {}
     from fastapi import Request
 
     class WorkerModel:
-        def __init__(self, name, seniority_level=1, skills=None, staff_id=None, hourly_rate=None):
-            self.id = str(uuid4())
+        def __init__(self, business_id, name, seniority_level=1, skills=None, staff_id=None, hourly_rate=None):
+            # Assign integer ID unique per business
+            if business_id not in worker_id_counters:
+                worker_id_counters[business_id] = 1
+            self.id = worker_id_counters[business_id]
+            worker_id_counters[business_id] += 1
             self.name = name
             self.seniority_level = int(seniority_level) if seniority_level is not None else 1
             if isinstance(skills, str):
@@ -76,42 +127,47 @@ def create_app() -> FastAPI:
                 "required_skills": self.required_skills,
             }
 
-    @app.get("/api/workers", tags=["Workers"])
-    async def list_workers():
-        return [w.to_dict() for w in workers_store]
+    @app.get("/api/{business_id}/workers", tags=["Workers"])
+    async def list_workers(business_id: int):
+        return [w.to_dict() for w in workers_store.get(business_id, [])]
 
-    @app.post("/api/workers", tags=["Workers"])
-    async def add_worker(request: Request):
+    @app.post("/api/{business_id}/workers", tags=["Workers"])
+    async def add_worker(business_id: int, request: Request):
         worker_data = await request.json()
         name = worker_data.get("name")
         if not name:
             return JSONResponse(status_code=400, content={"error": "Name is required"})
         
         w = WorkerModel(
+            business_id=business_id,
             name=name,
             seniority_level=worker_data.get("seniority_level", 1),
             skills=worker_data.get("skills"),
             staff_id=worker_data.get("staff_id"),
             hourly_rate=worker_data.get("hourly_rate")
         )
-        workers_store.append(w)
+        if business_id not in workers_store:
+            workers_store[business_id] = []
+        workers_store[business_id].append(w)
         return w.to_dict()
 
-    @app.delete("/api/workers/{worker_id}", tags=["Workers"])
-    async def delete_worker(worker_id: str):
-        for i, w in enumerate(workers_store):
+    @app.delete("/api/{business_id}/workers/{worker_id}", tags=["Workers"])
+    async def delete_worker(business_id: int, worker_id: str):
+        if business_id not in workers_store:
+            return JSONResponse(status_code=404, content={"error": "Business not found"})
+        for i, w in enumerate(workers_store[business_id]):
             if w.id == worker_id:
-                workers_store.pop(i)
+                workers_store[business_id].pop(i)
                 return {"success": True}
         return JSONResponse(status_code=404, content={"error": "Worker not found"})
 
     # Shift template endpoints
-    @app.get("/api/shift-templates", tags=["Shifts"])
-    async def list_shift_templates():
-        return [t.to_dict() for t in shift_templates_store]
+    @app.get("/api/{business_id}/shift-templates", tags=["Shifts"])
+    async def list_shift_templates(business_id: int):
+        return [t.to_dict() for t in shift_templates_store.get(business_id, [])]
 
-    @app.post("/api/shift-templates", tags=["Shifts"])
-    async def add_shift_template(request: Request):
+    @app.post("/api/{business_id}/shift-templates", tags=["Shifts"])
+    async def add_shift_template(business_id: int, request: Request):
         data = await request.json()
         name = data.get("name")
         start_time = data.get("start_time")
@@ -126,14 +182,25 @@ def create_app() -> FastAPI:
             required_workers=data.get("required_workers", 1),
             required_skills=data.get("required_skills", [])
         )
-        shift_templates_store.append(t)
+        if business_id not in shift_templates_store:
+            shift_templates_store[business_id] = []
+        shift_templates_store[business_id].append(t)
         return t.to_dict()
 
-    @app.delete("/api/shift-templates/{template_id}", tags=["Shifts"])
-    async def delete_shift_template(template_id: str):
-        for i, t in enumerate(shift_templates_store):
+    @app.delete("/api/{business_id}/shift-templates", tags=["Shifts"])
+    async def delete_all_shift_templates(business_id: int):
+        if business_id in shift_templates_store:
+            shift_templates_store[business_id] = []
+            return {"success": True, "message": "All shift templates for this business have been deleted."}
+        return JSONResponse(status_code=404, content={"error": "Business not found or no shifts to delete"})
+
+    @app.delete("/api/{business_id}/shift-templates/{template_id}", tags=["Shifts"])
+    async def delete_shift_template(business_id: int, template_id: str):
+        if business_id not in shift_templates_store:
+            return JSONResponse(status_code=404, content={"error": "Business not found"})
+        for i, t in enumerate(shift_templates_store[business_id]):
             if t.id == template_id:
-                shift_templates_store.pop(i)
+                shift_templates_store[business_id].pop(i)
                 return {"success": True}
         return JSONResponse(status_code=404, content={"error": "Template not found"})
 
@@ -148,12 +215,13 @@ def create_app() -> FastAPI:
         return {"status": "healthy", "service": "shift-scheduler"}
 
     @app.post(
-        "/schedule",
+        "/schedule/{business_id}",
         response_model=SchedulingResponse,
         tags=["Scheduling"],
-        summary="Generate top-k scheduling solutions",
+        summary="Generate top-k scheduling solutions for a business",
     )
     async def generate_schedule(
+        business_id: int,
         request: SchedulingRequest,
         objective_weights: Optional[ObjectiveWeights] = None,
         top_k: int = 5,
@@ -167,6 +235,7 @@ def create_app() -> FastAPI:
         solver will return the top k solutions ranked by their objective value.
         
         Args:
+            business_id: The ID of the business for this request
             request: The scheduling request with workers and shifts
             objective_weights: Optional weights for soft constraints (uses defaults if not provided)
             top_k: Number of top solutions to return (default: 5)
@@ -179,6 +248,9 @@ def create_app() -> FastAPI:
             HTTPException: If scheduling fails or request is invalid
         """
         try:
+            if request.business_id != business_id:
+                raise ValueError("Business ID in URL does not match business ID in request body")
+
             if objective_weights is None:
                 objective_weights = ObjectiveWeights()
             
@@ -304,13 +376,16 @@ def create_app() -> FastAPI:
     return app
 
 
+app = create_app()
+
+
 if __name__ == "__main__":
     import uvicorn
     
-    app = create_app()
     uvicorn.run(
-        app,
+        "main:app",
         host="0.0.0.0",
         port=8000,
         log_level="info",
+        reload=True
     )

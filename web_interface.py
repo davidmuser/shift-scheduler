@@ -6,13 +6,13 @@ User-friendly web interface for managing workers, shifts, and scheduling.
 No JSON files, no coding needed - just simple forms and buttons.
 """
 
-from flask import Flask, render_template, request, jsonify, session, redirect
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, Response
 from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
 import uuid
-from typing import Any
+from typing import Any, Union, Tuple
 import logging
 from dotenv import load_dotenv
 
@@ -29,8 +29,10 @@ from src.models.data_models import (
     Worker, Shift, SkillLevel, Skill, SchedulingRequest, ObjectiveWeights, WorkerPreference,
     Business as BusinessModelDTO,
     User as UserDTO,
-    ShiftStatus, UserRole
+    ShiftStatus, UserRole, Schedule, ScheduleStatus,
+    ScheduleAssignment, SchedulingSolution
 )
+from src.solver.core_solver import SchedulingResponse
 from sqlalchemy import (
     Column,
     Integer,
@@ -87,6 +89,23 @@ class BusinessModel(Base):
     shifts = relationship("ShiftModel", back_populates="business", cascade="all, delete-orphan")
     shift_interests = relationship("ShiftInterestModel", back_populates="business", cascade="all, delete-orphan")
     published_schedules = relationship("PublishedScheduleModel", back_populates="business", cascade="all, delete-orphan")
+    schedules = relationship("ScheduleModel", back_populates="business", cascade="all, delete-orphan")
+
+
+class ScheduleModel(Base):
+    """Represents a saved or published schedule."""
+    __tablename__ = 'schedules'
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey('businesses.id', ondelete='CASCADE'), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    start_date = Column(String, nullable=False)
+    end_date = Column(String, nullable=False)
+    status = Column(String, default='Draft', nullable=False)  # Draft, Published, Locked
+    assignments = Column(Text, nullable=False)  # JSON string of assignments
+    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+    business = relationship("BusinessModel", back_populates="schedules")
 
 
 class UserModel(Base):
@@ -252,7 +271,7 @@ def _require_worker():
                         WorkerModel.name.ilike(user_obj.name),
                     ).first()
                     if worker_obj is not None:
-                        wid = int(worker_obj.id)
+                        wid = int(worker_obj.id)  # type: ignore[arg-type]
                         # Persist this association for the future.
                         try:
                             user_obj.worker_id = worker_obj.id
@@ -303,8 +322,9 @@ def _safe_json_dumps(value, fallback="[]"):
         return fallback
 
 
-# Create DB tables if they do not exist
-Base.metadata.create_all(bind=engine)
+def init_db():
+    """Create DB tables if they do not exist."""
+    Base.metadata.create_all(bind=engine)
 
 
 def _ensure_column(table_name: str, col_name: str, col_def_sql: str) -> None:
@@ -414,10 +434,14 @@ def login_page():
 
 @app.route('/setup')
 def setup():
-    """Setup wizard for workers and shifts."""
+    """Setup wizard for workers and shifts (Manager only)."""
     # Redirect to login if not authenticated
     if not session.get('business_id'):
         return redirect('/')
+    
+    # Redirect workers to availability page
+    if session.get('user_role') == UserRole.WORKER.value:
+        return redirect('/availability')
     
     return render_template(
         'setup.html',
@@ -670,10 +694,40 @@ def join_business(business_number):
             'business_name': biz.name,
             'worker_id': worker.id,
             'user_id': user.id,
-        }, 201)
+        }), 201
     except Exception as e:
         db.rollback()
         return jsonify({'error': str(e)}), 400
+    finally:
+        db.close()
+
+
+# ============================================================================
+# ROUTES - BUSINESS STATS
+# ============================================================================
+
+@app.route('/api/stats', methods=['GET'])  # type: ignore[misc]
+def get_stats():
+    """Get business statistics (workers, shifts, interests count)."""
+    bid, err, code = _require_business()
+    if err:
+        return err, code
+
+    db = SessionLocal()
+    try:
+        total_workers = db.query(WorkerModel).filter(WorkerModel.business_id == bid).count()
+        total_shifts = db.query(ShiftModel).filter(ShiftModel.business_id == bid).count()
+        total_interests = db.query(ShiftInterestModel).join(
+            ShiftModel, ShiftInterestModel.shift_id == ShiftModel.id
+        ).filter(ShiftModel.business_id == bid).count()
+
+        return jsonify({
+            'total_workers': total_workers,
+            'total_shifts': total_shifts,
+            'total_interests': total_interests
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Failed to get stats: {str(e)}'}), 500
     finally:
         db.close()
 
@@ -839,7 +893,7 @@ def add_worker():
             'success': True,
             'message': f'Worker {data["name"]} added successfully',
             'worker_id': dbw.id
-        }), 201
+        }, 201)
     except Exception as e:
         session.rollback()
         return jsonify({'error': str(e)}), 400
@@ -981,9 +1035,15 @@ def delete_worker(worker_id):
         dbw = session.query(WorkerModel).filter(WorkerModel.id == wid, WorkerModel.business_id == bid).first()
         if not dbw:
             return jsonify({'error': 'Worker not found'}), 404
+        
+        # Delete the worker and cascade delete related records
         session.delete(dbw)
         session.commit()
-        return jsonify({'success': True, 'message': 'Worker deleted'})
+        
+        return jsonify({'success': True, 'message': f'Worker deleted successfully'})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': f'Failed to delete worker: {str(e)}'}), 500
     finally:
         session.close()
 
@@ -1039,6 +1099,76 @@ def get_shifts() -> Any:
         return jsonify(shifts_list)
     finally:
         session.close()
+
+
+@app.route('/api/shifts/availability', methods=['GET'])  # type: ignore[misc]
+def get_shifts_availability() -> Any:
+    """Get shifts organized by day with worker interest data for the availability calendar."""
+    bid, err, code = _require_business()
+    if err:
+        return err, code
+
+    session_local = SessionLocal()
+    try:
+        # Get current user's worker_id if they are a worker
+        worker_id = session.get('worker_id')  # From Flask session, not SQLAlchemy session
+        
+        # Get all shifts
+        db_shifts = session_local.query(ShiftModel).filter(ShiftModel.business_id == bid).all()
+        
+        # Get all interests for this business
+        all_interests = session_local.query(ShiftInterestModel).filter(ShiftInterestModel.business_id == bid).all()
+        
+        # Build a set of shift_ids this worker is interested in
+        worker_interested_shift_ids = set()
+        if worker_id:
+            worker_interested_shift_ids = {i.shift_id for i in all_interests if i.worker_id == worker_id}
+        
+        # Organize shifts by date
+        shifts_by_day = {}
+        for s in db_shifts:
+            date_str = str(s.date)
+            if date_str not in shifts_by_day:
+                shifts_by_day[date_str] = []
+            
+            req_objs = _safe_json_loads(getattr(s, 'required_skills_json', '[]'), [])
+            req_names = [item['name'] if isinstance(item, dict) else item for item in req_objs]
+            
+            shifts_by_day[date_str].append({
+                'id': s.id,
+                'date': date_str,
+                'start_time': str(s.start_time),
+                'end_time': str(s.end_time),
+                'workers_required': int(s.workers_required) if s.workers_required else 1,  # type: ignore[arg-type]
+                'required_skills': req_names,
+                'required_skills_objects': req_objs,
+                'is_weekend': bool(s.is_weekend),
+                'status': getattr(s, 'status', ShiftStatus.OPEN.value),
+            })
+        
+        # Build worker interests list (shifts current worker is interested in)
+        worker_interests = list(worker_interested_shift_ids) if worker_id else []
+        
+        # Check if there's a published/locked schedule
+        ps = None
+        if bid is not None:
+            ps = _get_active_published_schedule(session_local, bid)
+        is_locked = bool(ps and getattr(ps, 'is_locked', False))
+        locked_period_start = str(ps.period_start) if ps else None
+        locked_period_end = str(ps.period_end) if ps else None
+        
+        return jsonify({
+            'shifts_by_day': shifts_by_day,
+            'worker_interests': worker_interests,
+            'is_locked': is_locked,
+            'locked_period_start': locked_period_start,
+            'locked_period_end': locked_period_end,
+        })
+    except Exception as e:
+        logger.error(f"Error in get_shifts_availability: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session_local.close()
 
 
 @app.route('/api/shifts', methods=['POST'])  # type: ignore[misc]
@@ -1132,7 +1262,7 @@ def add_shift():
             'success': True,
             'message': f'Shift on {shift_date or "(recurring weekly)"} added successfully',
             'shift_id': dbs.id
-        }), 201
+        }, 201)
     except Exception as e:
         session.rollback()
         return jsonify({'error': str(e)}), 400
@@ -1160,9 +1290,15 @@ def delete_shift(shift_id):
         dbs = session.query(ShiftModel).filter(ShiftModel.id == sid, ShiftModel.business_id == bid).first()
         if not dbs:
             return jsonify({'error': 'Shift not found'}), 404
+        
+        # Delete the shift and cascade delete related records (interests, assignments, etc)
         session.delete(dbs)
         session.commit()
-        return jsonify({'success': True, 'message': 'Shift deleted'})
+        
+        return jsonify({'success': True, 'message': 'Shift deleted successfully'})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': f'Failed to delete shift: {str(e)}'}), 500
     finally:
         session.close()
 
@@ -1247,6 +1383,8 @@ def list_shift_interests():
             })
 
         return jsonify(response)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
     finally:
         session.close()
 
@@ -1268,6 +1406,80 @@ def list_my_shift_interests():
             ShiftInterestModel.worker_id == wid
         ).all()
         return jsonify({'worker_id': wid, 'shift_ids': [i.shift_id for i in interests]})
+    finally:
+        session.close()
+
+
+@app.route('/api/shifts/interest', methods=['POST'])  # type: ignore[misc]
+def handle_shift_interest():
+    """
+    Worker marks interest in a shift (or withdraws it).
+    Expected JSON: { "shift_id": <id>, "interested": true/false }
+    """
+    data = request.json or {}
+    shift_id = data.get('shift_id')
+    interested = data.get('interested', True)
+    
+    if not shift_id:
+        return jsonify({'error': 'shift_id is required'}), 400
+    
+    try:
+        sid = int(shift_id)
+    except Exception:
+        return jsonify({'error': 'Invalid shift id'}), 400
+    
+    bid, err, code = _require_business()
+    if err:
+        return err, code
+    
+    wid, err_resp, err_code = _require_worker()
+    if err_resp:
+        return err_resp, err_code
+    
+    session = SessionLocal()
+    try:
+        shift = session.query(ShiftModel).filter(ShiftModel.id == sid, ShiftModel.business_id == bid).first()
+        if not shift:
+            return jsonify({'error': 'Shift not found'}), 404
+        
+        # If there is a locked published schedule covering this shift date, prevent changes
+        if bid is not None:
+            ps = _get_active_published_schedule(session, bid)
+            if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
+                try:
+                    sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
+                    start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
+                    end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
+                    if start <= sd <= end:
+                        return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
+                except Exception:
+                    pass
+        
+        # Find existing interest
+        exists = session.query(ShiftInterestModel).filter(
+            ShiftInterestModel.business_id == bid,
+            ShiftInterestModel.shift_id == sid,
+            ShiftInterestModel.worker_id == wid
+        ).first()
+        
+        if interested:
+            # Mark as interested (add if not exists)
+            if not exists:
+                interest = ShiftInterestModel(business_id=bid, shift_id=sid, worker_id=wid)
+                session.add(interest)
+                session.commit()
+            return jsonify({'success': True, 'message': 'Interest recorded'})
+        else:
+            # Withdraw interest (delete if exists)
+            if exists:
+                session.delete(exists)
+                session.commit()
+            return jsonify({'success': True, 'message': 'Interest withdrawn'})
+    
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error handling shift interest: {e}")
+        return jsonify({'error': str(e)}), 400
     finally:
         session.close()
 
@@ -1295,16 +1507,17 @@ def express_interest(shift_id):
 
         # If there is a locked published schedule covering this shift date,
         # prevent workers from changing their interest to keep the design consistent.
-        ps = _get_active_published_schedule(session, bid)
-        if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
-            try:
-                sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
-                start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
-                end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
-                if start <= sd <= end:
-                    return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
-            except Exception:
-                pass
+        if bid is not None:
+            ps = _get_active_published_schedule(session, bid)
+            if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
+                try:
+                    sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
+                    start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
+                    end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
+                    if start <= sd <= end:
+                        return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
+                except Exception:
+                    pass
 
         exists = session.query(ShiftInterestModel).filter(
             ShiftInterestModel.business_id == bid,
@@ -1325,20 +1538,20 @@ def express_interest(shift_id):
         session.close()
 
 
-@app.route('/api/shifts/<shift_id>/interest', methods=['DELETE'])  # type: ignore[misc]
-def withdraw_interest(shift_id):
-    """Worker withdraws interest in a shift."""
-    try:
-        sid = int(shift_id)
-    except Exception:
-        return jsonify({'error': 'Invalid shift id'}), 400
-
-    bid, err, code = _require_business()
-    if err:
-        return err, code
+@app.route('/api/shift-interests', methods=['DELETE'])
+def remove_shift_interest() -> Union[Response, Tuple[Response, int]]:
+    """Remove a worker's interest in a shift."""
+    bid, err_resp, err_code = _require_business()
+    if err_resp:
+        return err_resp, err_code or 500
+    
     wid, err_resp, err_code = _require_worker()
     if err_resp:
-        return err_resp, err_code
+        return err_resp, err_code or 500
+
+    sid = request.args.get('shift_id')
+    if not sid:
+        return jsonify({'error': 'shift_id is required'}), 400
 
     session = SessionLocal()
     try:
@@ -1346,24 +1559,84 @@ def withdraw_interest(shift_id):
         if not shift:
             return jsonify({'error': 'Shift not found'}), 404
 
-        ps = _get_active_published_schedule(session, bid)
-        if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
-            try:
-                sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
-                start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
-                end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
-                if start <= sd <= end:
-                    return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
-            except Exception:
-                pass
+        # If there is a locked published schedule covering this shift date,
+        # prevent workers from changing their interest to keep the design consistent.
+        if bid is not None:
+            ps = _get_active_published_schedule(session, bid)
+            if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
+                try:
+                    sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
+                    start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
+                    end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
+                    if start <= sd <= end:
+                        return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
+                except Exception:
+                    pass
 
-        deleted = session.query(ShiftInterestModel).filter(
-            ShiftInterestModel.business_id == bid,
-            ShiftInterestModel.shift_id == sid,
-            ShiftInterestModel.worker_id == wid
-        ).delete()
+        interest = session.query(ShiftInterestModel).filter(
+            ShiftInterestModel.worker_id == wid,
+            ShiftInterestModel.shift_id == sid
+        ).first()
+        if not interest:
+            return jsonify({'success': True, 'message': 'No interest found to remove'}), 200
+
+        session.delete(interest)
         session.commit()
-        return jsonify({'success': True, 'deleted': bool(deleted)})
+        return jsonify({'success': True, 'message': 'Interest removed'})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/shift/interest', methods=['PUT'])
+def add_shift_interest() -> Union[Response, Tuple[Response, int]]:
+    """Add a worker's interest in a shift."""
+    bid, err_resp, err_code = _require_business()
+    if err_resp:
+        return err_resp, err_code or 500
+    
+    wid, err_resp, err_code = _require_worker()
+    if err_resp:
+        return err_resp, err_code or 500
+
+    sid = request.args.get('shift_id')
+    if not sid:
+        return jsonify({'error': 'shift_id is required'}), 400
+
+    session = SessionLocal()
+    try:
+        shift = session.query(ShiftModel).filter(ShiftModel.id == sid, ShiftModel.business_id == bid).first()
+        if not shift:
+            return jsonify({'error': 'Shift not found'}), 404
+
+        if bid is not None:
+            ps = _get_active_published_schedule(session, bid)
+            if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
+                try:
+                    sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
+                    start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
+                    end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
+                    if start <= sd <= end:
+                        return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
+                except Exception:
+                    pass
+
+        existing = session.query(ShiftInterestModel).filter(
+            ShiftInterestModel.worker_id == wid,
+            ShiftInterestModel.shift_id == sid
+        ).first()
+        if existing:
+            return jsonify({'success': True, 'message': 'Interest already recorded'}), 200
+
+        interest = ShiftInterestModel(business_id=bid, shift_id=sid, worker_id=wid)
+        session.add(interest)
+        session.commit()
+        return jsonify({'success': True, 'message': 'Interest recorded'}), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': str(e)}), 500
     finally:
         session.close()
 
@@ -1451,27 +1724,29 @@ def run_schedule():
                     if d.weekday() in [int(x) for x in weekdays]:
                         new_id = base_id * 100 + offset + 1
                         shift_allowed_map[new_id] = set(interest_map.get(base_id, set()))
-                        shifts_list.append(Shift(
-                            id=new_id,
-                            business_id=bid,
-                            date=d.isoformat(),
-                            start_time=str(dbs.start_time),
-                            end_time=str(dbs.end_time),
-                            required_skills=req_sk,
-                            workers_required=int(dbs.workers_required),  # type: ignore[arg-type]
-                            is_weekend=bool(dbs.is_weekend),
-                        ))
+                        if bid is not None:
+                            shifts_list.append(Shift(
+                                id=new_id,
+                                business_id=bid,
+                                date=d.isoformat(),
+                                start_time=str(dbs.start_time),
+                                end_time=str(dbs.end_time),
+                                required_skills=req_sk,
+                                workers_required=int(dbs.workers_required),  # type: ignore[arg-type]
+                                is_weekend=bool(dbs.is_weekend),
+                            ))
             else:
-                shifts_list.append(Shift(
-                    id=int(dbs.id),  # type: ignore[arg-type]
-                    business_id=bid,
-                    date=str(dbs.date),
-                    start_time=str(dbs.start_time),
-                    end_time=str(dbs.end_time),
-                    required_skills=req_sk,
-                    workers_required=int(dbs.workers_required),  # type: ignore[arg-type]
-                    is_weekend=bool(dbs.is_weekend),
-                ))
+                if bid is not None:
+                    shifts_list.append(Shift(
+                        id=int(dbs.id),  # type: ignore[arg-type]
+                        business_id=bid,
+                        date=str(dbs.date),
+                        start_time=str(dbs.start_time),
+                        end_time=str(dbs.end_time),
+                        required_skills=req_sk,
+                        workers_required=int(dbs.workers_required),  # type: ignore[arg-type]
+                        is_weekend=bool(dbs.is_weekend),
+                    ))
                 base_id = int(getattr(dbs, 'id'))
                 shift_allowed_map[base_id] = set(interest_map.get(base_id, set()))
 
@@ -1531,15 +1806,16 @@ def run_schedule():
                 max_shifts_per_week=5,
             )
 
-            workers_list.append(Worker(
-                id=int(dbw.id),  # type: ignore[arg-type]
-                business_id=bid,
-                name=str(dbw.name),
-                seniority_level=int(dbw.seniority_level),  # type: ignore[arg-type]
-                skills=skills,
-                hourly_rate=float(dbw.hourly_rate),  # type: ignore[arg-type]
-                preferences=prefs,
-            ))
+            if bid is not None:
+                workers_list.append(Worker(
+                    id=int(dbw.id),  # type: ignore[arg-type]
+                    business_id=bid,
+                    name=str(dbw.name),
+                    seniority_level=int(dbw.seniority_level),  # type: ignore[arg-type]
+                    skills=skills,
+                    hourly_rate=float(dbw.hourly_rate),  # type: ignore[arg-type]
+                    preferences=prefs,
+                ))
 
         # Determine scheduling period from valid shift dates
         parsed_dates = []
@@ -1554,108 +1830,166 @@ def run_schedule():
         scheduling_period_start = min(parsed_dates).isoformat()
         scheduling_period_end = max(parsed_dates).isoformat()
 
-        request_data = SchedulingRequest(
-            workers=workers_list,
-            shifts=shifts_list,
-            scheduling_period_start=scheduling_period_start,
-            scheduling_period_end=scheduling_period_end,
-            metadata={}
-        )
+        if bid is not None:
+            request_data = SchedulingRequest(
+                business_id=bid,
+                workers=workers_list,
+                shifts=shifts_list,
+                scheduling_period_start=scheduling_period_start,
+                scheduling_period_end=scheduling_period_end,
+                metadata={}
+            )
 
-        weights_data = (request.json or {}).get('weights', {})
+            weights_data = (request.json or {}).get('weights', {})
 
-        def _w(key, alt, default):
-            return float(weights_data.get(key, weights_data.get(alt, default)))
+            def _w(key, alt, default):
+                return float(weights_data.get(key, weights_data.get(alt, default)))
 
-        objective_weights = ObjectiveWeights(
-            respect_time_off_requests=_w('respect_time_off_requests', 'time_off_request_weight', 10.0),
-            reward_seniority=_w('reward_seniority', 'seniority_reward_weight', 5.0),
-            balance_weekend_shifts=_w('balance_weekend_shifts', 'weekend_balance_weight', 8.0),
-            reward_skill_matching=_w('reward_skill_matching', 'skill_matching_weight', 7.0),
-            balance_workload=_w('balance_workload', 'workload_balance_weight', 6.0),
-            minimize_compensation=_w('minimize_compensation', 'compensation_minimization_weight', 2.0),
-            minimize_overstaffing=_w('minimize_overstaffing', 'overstaffing_penalty_weight', 3.0),
-        )
+            objective_weights = ObjectiveWeights(
+                respect_time_off_requests=_w('respect_time_off_requests', 'time_off_request_weight', 10.0),
+                reward_seniority=_w('reward_seniority', 'seniority_reward_weight', 5.0),
+                balance_weekend_shifts=_w('balance_weekend_shifts', 'weekend_balance_weight', 8.0),
+                reward_skill_matching=_w('reward_skill_matching', 'skill_matching_weight', 7.0),
+                balance_workload=_w('balance_workload', 'workload_balance_weight', 6.0),
+                minimize_compensation=_w('minimize_compensation', 'compensation_minimization_weight', 2.0),
+                minimize_overstaffing=_w('minimize_overstaffing', 'overstaffing_penalty_weight', 3.0),
+            )
 
-        solver = ShiftSchedulingSolver(
-            timeout_seconds=60,
-            top_k=int(request.json.get('top_k', 3))
-        )
+            solver = ShiftSchedulingSolver(
+                timeout_seconds=60,
+                top_k=int(request.json.get('top_k', 3))
+            )
 
-        # If interests exist for a shift, restrict solver to interested workers; otherwise allow all
-        worker_ids_set = {w.id for w in workers_list}
-        allowed_pairs = []
-        for sh in shifts_list:
-            interested_workers = {w for w in shift_allowed_map.get(sh.id, set()) if w in worker_ids_set}
-            if interested_workers:
-                allowed_pairs.extend([(wid, sh.id) for wid in interested_workers])
-            else:
-                allowed_pairs.extend([(w.id, sh.id) for w in workers_list])
+            # If interests exist for a shift, restrict solver to interested workers; otherwise allow all
+            worker_ids_set = {w.id for w in workers_list}
+            allowed_pairs = []
+            for sh in shifts_list:
+                interested_workers = {w for w in shift_allowed_map.get(sh.id, set()) if w in worker_ids_set}
+                if interested_workers:
+                    allowed_pairs.extend([(wid, sh.id) for wid in interested_workers])
+                else:
+                    allowed_pairs.extend([(w.id, sh.id) for w in workers_list])
 
-        request_data.metadata = {'allowed_pairs': allowed_pairs}
+            request_data.metadata = {'allowed_pairs': allowed_pairs}
 
-        response = solver.solve(request_data, objective_weights)
-        solutions = response
+            response = solver.solve(request_data, objective_weights)
+            solutions = response
 
-        worker_map = {w.id: w for w in workers_list}
-        shift_map = {s.id: s for s in shifts_list}
+            # If no complete solution found, generate partial solution with unassigned shifts for manual selection
+            if not response.solutions:
+                # Return partial solution: all shifts available for manual assignment
+                partial_assignments = []
+                assigned_shift_ids = set()
+                
+                # Add all shifts as unassigned so manager can manually select
+                for shift in shifts_list:
+                    partial_assignments.append(
+                        ScheduleAssignment(
+                            worker_id=None,
+                            worker_name="Unassigned",
+                            shift_id=shift.id,
+                            shift_date=shift.date,
+                            shift_start=shift.start_time,
+                            shift_end=shift.end_time,
+                            is_assigned=False
+                        )
+                    )
+                
+                # Create a single "blank" solution for manual editing
+                partial_solution = SchedulingSolution(
+                    rank=1,
+                    objective_value=0,
+                    assignments=partial_assignments,
+                )
+                
+                session = SessionLocal()
+                try:
+                    new_schedule_db = ScheduleModel(
+                        business_id=bid,
+                        name=f"Schedule {scheduling_period_start} to {scheduling_period_end}",
+                        start_date=scheduling_period_start,
+                        end_date=scheduling_period_end,
+                        status=ScheduleStatus.DRAFT.value,
+                        assignments=json.dumps([a.dict() for a in partial_solution.assignments])
+                    )
+                    session.add(new_schedule_db)
+                    session.commit()
+                    session.refresh(new_schedule_db)
+                    
+                    # Build interested_by_shift mapping
+                    interested_by_shift = {}
+                    for shift_id, worker_ids in shift_allowed_map.items():
+                        if worker_ids:
+                            interested_by_shift[str(shift_id)] = list(worker_ids)
+                    
+                    # Build workers data
+                    workers_data = [{'id': w.id, 'name': w.name} for w in workers_list]
+                    
+                    return jsonify(
+                        schedule_id=new_schedule_db.id,
+                        solutions=[partial_solution.dict()],
+                        workers=workers_data,
+                        interested_by_shift=interested_by_shift,
+                        status=ScheduleStatus.DRAFT.value,
+                        summary={
+                            'total_workers': len(workers_list),
+                            'total_shifts': len(shifts_list),
+                            'message': 'No complete feasible solution found. All shifts available for manual assignment.'
+                        }
+                    )
+                except Exception as e:
+                    session.rollback()
+                    logger.error(f"Error saving partial schedule: {e}")
+                    return jsonify(error="Failed to save the schedule to the database."), 500
+                finally:
+                    session.close()
 
-        solutions_list = []
-        for sol in response.solutions:
-            assignments = []
-            for assignment in sol.assignments:
-                wid = assignment.worker_id
-                sid = assignment.shift_id
-                worker = worker_map.get(wid)
-                shift = shift_map.get(sid)
-                assignments.append({
-                    'worker_id': wid,
-                    'worker_name': worker.name if worker else None,
-                    'shift_id': sid,
-                    'shift_date': shift.date if shift else None,
-                    'shift_start': shift.start_time if shift else None,
-                    'shift_end': shift.end_time if shift else None,
-                    'is_assigned': getattr(assignment, 'is_assigned', True)
-                })
+            # For simplicity, save the first solution found
+            best_solution = response.solutions[0]
 
-            solutions_list.append({
-                'rank': sol.solution_rank,
-                'objective_value': sol.objective_value,
-                'assignments': assignments
-            })
+            session = SessionLocal()
+            try:
+                new_schedule_db = ScheduleModel(
+                    business_id=bid,
+                    name=f"Schedule {scheduling_period_start} to {scheduling_period_end}",
+                    start_date=scheduling_period_start,
+                    end_date=scheduling_period_end,
+                    status=ScheduleStatus.DRAFT.value,
+                    assignments=json.dumps([a.dict() for a in best_solution.assignments])
+                )
+                session.add(new_schedule_db)
+                session.commit()
+                session.refresh(new_schedule_db)
+                
+                # Build interested_by_shift mapping
+                interested_by_shift = {}
+                for shift_id, worker_ids in shift_allowed_map.items():
+                    if worker_ids:
+                        interested_by_shift[str(shift_id)] = list(worker_ids)
+                
+                # Build workers data
+                workers_data = [{'id': w.id, 'name': w.name} for w in workers_list]
+                
+                return jsonify(
+                    schedule_id=new_schedule_db.id,
+                    solutions=[s.dict() for s in response.solutions],
+                    workers=workers_data,
+                    interested_by_shift=interested_by_shift,
+                    status=ScheduleStatus.DRAFT.value,
+                    summary={
+                        'total_workers': len(workers_list),
+                        'total_shifts': len(shifts_list)
+                    }
+                )
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error saving new schedule: {e}")
+                return jsonify(error="Failed to save the new schedule to the database."), 500
+            finally:
+                session.close()
 
-        # Serialize all workers so the frontend can reassign shifts between them
-        workers_payload = [
-            {
-                'id': w.id,
-                'name': w.name,
-            }
-            for w in workers_list
-        ]
-
-        # For each concrete shift id in this scheduling run, record which
-        # workers had expressed interest ("offered" this shift). This lets
-        # the UI highlight interested workers in the reassignment controls.
-        interested_by_shift = {
-            int(sid): sorted(int(wid) for wid in wids)
-            for sid, wids in shift_allowed_map.items()
-            if wids
-        }
-
-        return jsonify({
-            'success': True,
-            'message': f'Generated {len(solutions_list)} solutions',
-            'solutions': solutions_list,
-            'workers': workers_payload,
-            'interested_by_shift': interested_by_shift,
-            'summary': {
-                'total_workers': len(workers_list),
-                'total_shifts': len(shifts_list),
-                'total_solutions': len(solutions_list)
-            }
-        }), 200
-    except Exception as e:
-        return jsonify({'error': f'Scheduling failed: {str(e)}'}), 400
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
 
 
 @app.route('/api/schedule/publish', methods=['POST'])  # type: ignore[misc]
@@ -1749,6 +2083,8 @@ def get_published_schedule():
 
     db = SessionLocal()
     try:
+        if bid is None:
+            return jsonify({'published': False}), 200
         ps = _get_active_published_schedule(db, bid)
         if not ps:
             return jsonify({'published': False}), 200
@@ -1771,304 +2107,36 @@ def get_published_schedule():
         db.close()
 
 
-# ============================================================================
-# ROUTES - SETTINGS & INFO
-# ============================================================================
-
-@app.route('/api/default-weights')
-def get_default_weights():
-    """Get default objective weights."""
-    weights = ObjectiveWeights()
-    return jsonify({
-        'respect_time_off_requests': weights.respect_time_off_requests,
-        'reward_seniority': weights.reward_seniority,
-        'balance_weekend_shifts': weights.balance_weekend_shifts,
-        'reward_skill_matching': weights.reward_skill_matching,
-        'balance_workload': weights.balance_workload,
-        'minimize_compensation': weights.minimize_compensation,
-        'minimize_overstaffing': weights.minimize_overstaffing,
-    })
-
-
-@app.route('/api/stats')  # type: ignore[misc]
-def get_stats():
-    """Get current data statistics including business info and worker list."""
+@app.route('/api/published-schedule', methods=['DELETE'])  # type: ignore[misc]
+def unpublish_schedule():
+    """Delete/unpublish the currently published schedule."""
     bid, err, code = _require_business()
     if err:
         return err, code
+
+    # Only managers can unpublish
+    if session.get('user_role') != UserRole.MANAGER.value:
+        return jsonify({'error': 'Only managers can unpublish schedules.'}), 403
 
     db = SessionLocal()
     try:
-        # Get business info
-        business = db.query(BusinessModel).filter(BusinessModel.id == bid).first()
-        business_name = business.name if business else 'Unknown'
-        business_number = business.unique_number if business else 'Unknown'
-        
-        # Get worker details
-        worker_rows = db.query(WorkerModel).filter(WorkerModel.business_id == bid).all()
-        workers_list = [
-            {
-                'id': w.id,
-                'name': w.name,
-                'seniority_level': w.seniority_level,
-                'hourly_rate': w.hourly_rate,
-                'skills': _safe_json_loads(w.skills_json, []),
-            }
-            for w in worker_rows
-        ]
-        
-        # Get shift summary
-        total_shifts = db.query(ShiftModel).filter(ShiftModel.business_id == bid).count()
-        total_interests = db.query(ShiftInterestModel).filter(ShiftInterestModel.business_id == bid).count()
-        shifts = [r[0] for r in db.query(ShiftModel.id).filter(ShiftModel.business_id == bid).all()]
-        
-        return jsonify({
-            'business_id': bid,
-            'business_name': business_name,
-            'business_number': business_number,
-            'total_workers': len(workers_list),
-            'workers': workers_list,
-            'total_shifts': total_shifts,
-            'total_interests': total_interests,
-            'shifts': shifts,
-        })
-    finally:
-        db.close()
+        if bid is None:
+            return jsonify({'error': 'No business found'}), 400
 
-
-@app.route('/api/clear-all', methods=['POST'])  # type: ignore[misc]
-def clear_all_data():
-    """Clear all workers and shifts (for testing)."""
-    bid, err, code = _require_business()
-    if err:
-        return err, code
-    ok, err_resp, err_code = _require_role(UserRole.MANAGER.value)
-    if not ok:
-        return err_resp, err_code
-
-    session = SessionLocal()
-    try:
-        session.query(WorkerModel).filter(WorkerModel.business_id == bid).delete()
-        session.query(ShiftModel).filter(ShiftModel.business_id == bid).delete()
-        session.query(ShiftInterestModel).filter(ShiftInterestModel.business_id == bid).delete()
-        session.commit()
-        global solutions
-        solutions = None
-        return jsonify({'success': True, 'message': 'All data cleared'})
-    finally:
-        session.close()
-
-
-# ============================================================================
-# ROUTES - WORKER AVAILABILITY & SHIFT INTEREST
-# ============================================================================
-
-@app.route('/api/shifts/availability', methods=['GET'])
-def get_available_shifts_for_week():
-    """Return shifts for the next 7 days grouped by weekday plus current worker interests.
-
-    Response shape (what the availability calendar expects):
-    {
-        "shifts_by_day": { "Monday": [ {shift}, ... ], ... },
-        "worker_interests": [shift_id, ...]
-    }
-    """
-    bid, err, code = _require_business()
-    if err:
-        return err, code
-
-    # Worker id is optional here so managers can also view the calendar.
-    wid = _get_worker_id()
-
-    db = SessionLocal()
-    try:
-        today = datetime.now().date()
-        end_of_week = today + timedelta(days=7)
-
-        # Determine if there is a locked published schedule and its period
-        locked_start_date = None
-        locked_end_date = None
         ps = _get_active_published_schedule(db, bid)
-        if ps and getattr(ps, 'is_locked', True):
-            try:
-                locked_start_date = datetime.strptime(ps.period_start, '%Y-%m-%d').date()
-                locked_end_date = datetime.strptime(ps.period_end, '%Y-%m-%d').date()
-            except Exception:
-                locked_start_date = None
-                locked_end_date = None
+        if not ps:
+            return jsonify({'error': 'No published schedule to unpublish.'}), 404
 
-        # Non-recurring shifts in the next 7 days
-        non_recurring = db.query(ShiftModel).filter(
-            ShiftModel.business_id == bid,
-            ShiftModel.recurring_weekly == False,
-            ShiftModel.date >= str(today),
-            ShiftModel.date <= str(end_of_week),
-        ).all()
-
-        # Recurring weekly shifts for this business
-        recurring = db.query(ShiftModel).filter(
-            ShiftModel.business_id == bid,
-            ShiftModel.recurring_weekly == True,
-        ).all()
-
-        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        shifts_by_day: dict[str, list[dict[str, Any]]] = {day: [] for day in day_names}
-
-        def add_shift_instance(date_str: str, shift: ShiftModel) -> None:
-            try:
-                dt = datetime.strptime(date_str, '%Y-%m-%d').date()
-                day_name = day_names[dt.weekday()]
-            except Exception:
-                # If date parsing fails, skip this instance
-                return
-
-            is_locked = False
-            if locked_start_date and locked_end_date:
-                try:
-                    is_locked = locked_start_date <= dt <= locked_end_date
-                except Exception:
-                    is_locked = False
-
-            shifts_by_day[day_name].append({
-                'id': shift.id,
-                'date': date_str,
-                'start_time': shift.start_time,
-                'end_time': shift.end_time,
-                'shift_type': shift.shift_type,
-                'required_skills': [
-                    item.get('name', item)
-                    for item in _safe_json_loads(getattr(shift, 'required_skills_json', '[]'), [])
-                ],
-                'is_locked': is_locked,
-            })
-
-        # Add concrete non-recurring shifts
-        for s in non_recurring:
-            add_shift_instance(s.date, s)
-
-        # Expand recurring shifts into this week
-        for s in recurring:
-            weekdays_int = [
-                int(d) for d in _safe_json_loads(getattr(s, 'weekdays_json', '[]'), [])
-                if str(d).isdigit()
-            ]
-            for i in range(7):
-                day_to_check = today + timedelta(days=i)
-                if day_to_check.weekday() in weekdays_int:
-                    add_shift_instance(day_to_check.strftime('%Y-%m-%d'), s)
-
-        # Collect worker's existing interests (if we know who the worker is)
-        worker_interests: list[int] = []
-        if wid is not None:
-            interests = db.query(ShiftInterestModel.shift_id).filter(
-                ShiftInterestModel.business_id == bid,
-                ShiftInterestModel.worker_id == wid,
-            ).all()
-            worker_interests = [row[0] for row in interests]
+        db.delete(ps)
+        db.commit()
 
         return jsonify({
-            'shifts_by_day': shifts_by_day,
-            'worker_interests': worker_interests,
-            'is_locked': bool(locked_start_date and locked_end_date),
-            'locked_period_start': ps.period_start if ps and locked_start_date and locked_end_date else None,
-            'locked_period_end': ps.period_end if ps and locked_start_date and locked_end_date else None,
-        })
-    finally:
-        db.close()
-
-
-@app.route('/api/shift-interests', methods=['GET'])
-def get_worker_shift_interests():
-    """Get all shift interests for the currently logged-in worker."""
-    bid, err, code = _require_business()
-    if err: return err, code
-    
-    wid, err, code = _require_worker()
-    if err: return err, code
-
-    db = SessionLocal()
-    try:
-        interests = db.query(ShiftInterestModel).filter(
-            ShiftInterestModel.business_id == bid,
-            ShiftInterestModel.worker_id == wid
-        ).all()
-        return jsonify([{'shift_id': i.shift_id, 'worker_id': i.worker_id} for i in interests])
-    finally:
-        db.close()
-
-
-@app.route('/api/shifts/interest', methods=['POST'])
-def manage_shift_interest():
-    """Add or remove a worker's interest in a shift (single POST with interested flag)."""
-    bid, err, code = _require_business()
-    if err:
-        return err, code
-
-    # Reuse the centralized worker resolution logic so we benefit from
-    # the strong User->Worker link and legacy fallbacks in _require_worker.
-    wid, werr, wcode = _require_worker()
-    if werr:
-        return werr, wcode
-
-    data = request.json or {}
-    shift_id = data.get('shift_id')
-    interested = data.get('interested')
-    if not shift_id:
-        return jsonify({'error': 'shift_id is required'}), 400
-
-    # interested must be provided so the client can both add and remove
-    if interested is None:
-        return jsonify({'error': 'interested flag is required'}), 400
-
-    db = SessionLocal()
-    try:
-        # Check if shift exists and belongs to the business
-        shift = db.query(ShiftModel).filter(ShiftModel.id == shift_id, ShiftModel.business_id == bid).first()
-        if not shift:
-            return jsonify({'error': 'Shift not found'}), 404
-
-        # Enforce lock for shifts that fall inside a published, locked schedule period
-        ps = _get_active_published_schedule(db, bid)
-        if ps and getattr(ps, 'is_locked', True) and getattr(shift, 'date', None):
-            try:
-                sd = datetime.strptime(str(shift.date), '%Y-%m-%d').date()
-                start = datetime.strptime(str(ps.period_start), '%Y-%m-%d').date()
-                end = datetime.strptime(str(ps.period_end), '%Y-%m-%d').date()
-                if start <= sd <= end:
-                    return jsonify({'error': 'This schedule has been published and locked. Availability for these shifts can no longer be changed.'}), 403
-            except Exception:
-                pass
-
-        existing_interest = db.query(ShiftInterestModel).filter(
-            ShiftInterestModel.shift_id == shift_id,
-            ShiftInterestModel.worker_id == wid
-        ).first()
-
-        if bool(interested):
-            # Add interest if it doesn't exist yet
-            if existing_interest:
-                return jsonify({'message': 'Interest already recorded'}), 200
-
-            new_interest = ShiftInterestModel(
-                business_id=bid,
-                shift_id=shift_id,
-                worker_id=wid
-            )
-            db.add(new_interest)
-            db.commit()
-            return jsonify({'success': True, 'message': 'Shift interest added'}), 201
-        else:
-            # Remove interest if present
-            if not existing_interest:
-                return jsonify({'message': 'No interest found to remove'}), 200
-
-            db.delete(existing_interest)
-            db.commit()
-            return jsonify({'success': True, 'message': 'Shift interest removed'}), 200
-            
+            'success': True,
+            'message': 'Schedule unpublished successfully.'
+        }), 200
     except Exception as e:
         db.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Failed to unpublish schedule: {str(e)}'}), 500
     finally:
         db.close()
 
@@ -2087,6 +2155,20 @@ def not_found(error):
 def server_error(error):
     """Handle 500 errors."""
     return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Global exception handler."""
+    # Log the exception for debugging
+    logger.error(f"An unhandled exception occurred: {e}", exc_info=True)
+    
+    # For API requests, return JSON
+    if request.path.startswith('/api/'):
+        return jsonify(error="An unexpected error occurred. Please try again later."), 500
+    
+    # For other requests, you might want to render an error page
+    return "An unexpected error occurred.", 500
 
 
 # ============================================================================
@@ -2129,14 +2211,66 @@ def generate_index_html():
 </html>
         """)
 
+# ============================================================================
+# FOR TESTING PURPOSES ONLY
+# ============================================================================
+@app.route('/api/default-weights', methods=['GET'])
+def get_default_weights():
+    """Get default objective weights for the scheduling solver."""
+    return jsonify({
+        'respect_time_off_requests': 10.0,
+        'reward_seniority': 5.0,
+        'balance_weekend_shifts': 8.0,
+        'reward_skill_matching': 7.0,
+        'balance_workload': 6.0,
+        'minimize_compensation': 2.0,
+        'minimize_overstaffing': 3.0
+    })
+
+
+@app.route('/api/test/set_session', methods=['GET'])
+def test_set_session():
+    """
+    FOR TESTING ONLY: Creates a test business/user and sets the session.
+    """
+    db = SessionLocal()
+    try:
+        biz = db.query(BusinessModel).filter(BusinessModel.unique_number == "TESTBIZ123").first()
+        if not biz:
+            biz = BusinessModel(name="Test Business", unique_number="TESTBIZ123")
+            db.add(biz)
+            db.commit()
+            db.refresh(biz)
+
+        user = db.query(UserModel).filter(UserModel.name == "Test Manager", UserModel.business_id == biz.id).first()
+        if not user:
+            user = UserModel(name="Test Manager", role=UserRole.MANAGER.value, business_id=biz.id)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        
+        _set_session(biz.id, biz.name, UserRole.MANAGER.value, user.id) # type: ignore
+        return jsonify({"success": True, "message": "Test session set."})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
+
+def main():
+    """Main entry point for running the web interface."""
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    init_db()
+    logging.info("Generating index.html...")
+    generate_index_html()
+    logging.info("Starting Flask app...")
+    app.run(debug=False, host='0.0.0.0', port=5000)
 
 if __name__ == '__main__':
-    # Create templates directory and files if needed
-    generate_index_html()
-    
-    print("🚀 Starting Shift Scheduler Web Interface...")
-    print("📱 Open your browser and go to: http://localhost:5000")
-    print("💡 No coding needed - just fill in the forms!")
-    print("🛑 Press Ctrl+C to stop the server\n")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    main()

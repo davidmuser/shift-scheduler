@@ -79,7 +79,7 @@
     <div class="container">
         <header class="header">
             <h1>My Weekly Availability</h1>
-            <a href="/setup" class="btn btn-secondary">Back to Dashboard</a>
+            <button onclick="logout()" class="btn btn-secondary">Logout</button>
         </header>
 
         {% if user_role == 'Worker' %}
@@ -143,7 +143,7 @@
         }
 
         function renderCalendar(payload) {
-            const shiftsByDay = payload.shifts_by_day || {};
+            const shiftsByDate = payload.shifts_by_day || {};
             const workerInterests = payload.worker_interests || [];
             const isLockedOverall = !!payload.is_locked;
             const lockedStart = payload.locked_period_start;
@@ -151,7 +151,6 @@
 
             const weekView = document.getElementById('weekView');
             weekView.innerHTML = '';
-            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
             // If the entire period is locked, surface a small notice near the toolbar
             if (isLockedOverall) {
@@ -168,16 +167,29 @@
                 }
             }
 
-            days.forEach((day, index) => {
+            // Get sorted dates
+            const sortedDates = Object.keys(shiftsByDate).sort();
+            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+            sortedDates.forEach(dateStr => {
                 const dayColumn = document.createElement('div');
                 dayColumn.className = 'day-column';
 
+                // Parse date to get day name
+                let dayName = 'Unknown';
+                try {
+                    const date = new Date(dateStr + 'T00:00:00Z');
+                    dayName = dayNames[date.getUTCDay()];
+                } catch (e) {
+                    dayName = dateStr;
+                }
+
                 const dayHeader = document.createElement('div');
                 dayHeader.className = 'day-header';
-                dayHeader.textContent = day;
+                dayHeader.textContent = `${dayName} (${dateStr})`;
                 dayColumn.appendChild(dayHeader);
 
-                const shifts = shiftsByDay[day] || [];
+                const shifts = shiftsByDate[dateStr] || [];
                 if (shifts.length === 0) {
                     dayColumn.innerHTML += '<p class="empty-list">No shifts</p>';
                 } else {
@@ -382,6 +394,18 @@
                     saveStatus.textContent = 'Error saving availability.';
                 }
             }
+        }
+
+        function logout() {
+            fetch('/api/logout', { method: 'POST' })
+                .then(response => {
+                    if (response.ok) {
+                        window.location.href = '/';
+                    } else {
+                        console.error('Logout failed on server.');
+                    }
+                })
+                .catch(error => console.error('Logout failed:', error));
         }
     </script>
 </body>

@@ -238,7 +238,6 @@
             <div class="tabs">
                 <button class="tab-button active" onclick="switchTab('login')">Login</button>
                 <button class="tab-button" onclick="switchTab('register')">New Business</button>
-                <button class="tab-button" onclick="switchTab('join')">Join Team</button>
             </div>
 
             <!-- LOGIN TAB -->
@@ -310,41 +309,8 @@
             </div>
 
             <!-- JOIN TAB -->
-            <div id="join" class="tab-content">
-                <h2>Join an Existing Team</h2>
-                <p>Use your team's business number to join</p>
+            <!-- This option has been removed -->
 
-                <form id="joinForm">
-                    <div class="form-group">
-                        <label for="joinBusinessNumber">Business Number</label>
-                        <input type="text" id="joinBusinessNumber" placeholder="Ask your manager for this" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="joinName">Your Full Name</label>
-                        <input type="text" id="joinName" placeholder="Enter your name" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="joinRole">Your Role</label>
-                        <select id="joinRole" required>
-                            <option value="">-- Select Role --</option>
-                            <option value="Worker">Worker</option>
-                            <option value="Manager">Manager (if authorized)</option>
-                        </select>
-                    </div>
-
-                    <div id="joinLoading" class="loading">
-                        <div class="spinner"></div>
-                        <p>Joining team...</p>
-                    </div>
-
-                    <div class="button-group">
-                        <button type="submit" class="btn-primary">Join Team</button>
-                        <button type="reset" class="btn-secondary">Clear</button>
-                    </div>
-                </form>
-            </div>
         </div>
 
         <footer style="text-align: center; color: #999; margin-top: 40px;">
@@ -481,52 +447,9 @@
             }
         });
 
-        // JOIN FORM
-        document.getElementById('joinForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            clearMessages();
-            showLoading('joinLoading', true);
+        // JOIN FORM - REMOVED
+        // Users should login with their business number and name instead
 
-            const businessNumber = document.getElementById('joinBusinessNumber').value.trim();
-            const name = document.getElementById('joinName').value.trim();
-            const role = document.getElementById('joinRole').value;
-
-            if (!businessNumber || !name || !role) {
-                showError('Please fill in all fields');
-                showLoading('joinLoading', false);
-                return;
-            }
-
-            try {
-                const response = await fetch(`/join/${businessNumber}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: name,
-                        role: role
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok && data.success) {
-                    showSuccess('Successfully joined team! Redirecting...');
-                    setTimeout(() => {
-                        if (role === 'Manager') {
-                            window.location.href = '/setup';
-                        } else {
-                            window.location.href = '/availability';
-                        }
-                    }, 1000);
-                } else {
-                    showError(data.error || 'Failed to join team');
-                }
-            } catch (error) {
-                showError('Error: ' + error.message);
-            } finally {
-                showLoading('joinLoading', false);
-            }
-        });
     </script>
 </body>
 </html>
