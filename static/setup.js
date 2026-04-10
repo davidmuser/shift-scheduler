@@ -96,6 +96,47 @@ async function handleShiftFormSubmit(e) {
     const formData = new FormData(e.target);
     const data = Object.fromEntries(formData.entries());
 
+    // Default workers_needed to 1 if not set
+    if (!data.required_workers || isNaN(parseInt(data.required_workers))) {
+        data.required_workers = 1;
+        document.getElementById('requiredWorkers').value = 1;
+    }
+
+    // Validate required fields
+    let invalid = false;
+    const requiredFields = [
+        { id: 'shiftDate', name: 'Date' },
+        { id: 'shiftStart', name: 'Start Time' },
+        { id: 'shiftEnd', name: 'End Time' }
+    ];
+    requiredFields.forEach(f => {
+        const el = document.getElementById(f.id);
+        if (!el.value) {
+            el.classList.add('input-error');
+            invalid = true;
+        } else {
+            el.classList.remove('input-error');
+        }
+    });
+    if (invalid) {
+        showNotification('Please fill all required fields for the shift.', 'error');
+        return;
+    }
+
+    const confirmed = await showConfirmDialog({
+        title: 'Confirm Shift Creation',
+        details: {
+            'Date': data.date,
+            'Time': `${data.start_time} - ${data.end_time}`,
+            'Workers Needed': data.required_workers,
+            'Required Skills': data.required_skills || 'None',
+            'Note': data.note || 'None'
+        },
+        confirmText: 'Create Shift'
+    });
+
+    if (!confirmed) return;
+
     try {
         const response = await fetch('/api/shifts', {
             method: 'POST',
@@ -114,10 +155,14 @@ async function handleShiftFormSubmit(e) {
         await updateProceedButton();
         loadBusinessInfo(); // Refresh stats
     } catch (error) {
-        showNotification(error.message, 'error');
+        showNotification(`Error creating shift: – ${error.message}`, 'error');
         console.error('Error creating shift:', error);
     }
 }
+// Add error style for invalid input
+const style = document.createElement('style');
+style.innerHTML = `.input-error { border: 2px solid #dc3545 !important; background: #fff0f0 !important; }`;
+document.head.appendChild(style);
 
 // ----------------------------------------------------------------------------
 // DATA LOADING & RENDERING
@@ -193,6 +238,7 @@ async function loadShifts() {
                             <span>Workers Needed: <strong>${shift.required_workers}</strong></span>
                             <span>Required Skills: <strong>${escapeHtml(skillsList)}</strong></span>
                         </div>
+                        ${shift.note ? `<div class="list-item-note">Note: ${escapeHtml(shift.note)}</div>` : ''}
                     </div>
                     <button class="list-item-delete" onclick="deleteShift('${shift.id}')" title="Delete Shift">Delete</button>
                 </div>

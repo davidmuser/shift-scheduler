@@ -42,10 +42,7 @@
                             <label for="workerName">Worker Name *</label>
                             <input type="text" id="workerName" name="name" class="form-control" placeholder="e.g., John Smith" required>
                         </div>
-                        <div class="form-group">
-                            <label for="staffId">Worker Number</label>
-                            <input type="number" id="staffId" name="staff_id" class="form-control" placeholder="e.g., 1001">
-                        </div>
+                        <!-- Worker number removed: name is unique per business -->
                         <div class="form-group">
                             <label for="seniority">Seniority Level</label>
                             <select id="seniority" name="seniority_level" class="form-control">
@@ -92,6 +89,10 @@
                         <div class="form-group">
                             <label for="requiredSkills">Required Skills (comma-separated)</label>
                             <input type="text" id="requiredSkills" name="required_skills" class="form-control" placeholder="e.g., cash handling">
+                        </div>
+                        <div class="form-group">
+                            <label for="shiftNote">Note</label>
+                            <input type="text" id="shiftNote" name="note" class="form-control" placeholder="Optional note for the shift">
                         </div>
                         <button type="submit" class="btn btn-primary" style="width: 100%;">Create Shift</button>
                     </form>

@@ -129,7 +129,6 @@ class WorkerModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     business_id = Column(Integer, ForeignKey('businesses.id', ondelete='CASCADE'), nullable=False, index=True)
     name = Column(String, nullable=False)
-    # staff_id = Column(Integer)  # Worker number assigned by manager - not in db yet
     seniority_level = Column(Integer, default=0)
     hourly_rate = Column(Float, default=15.0)
     user_role = Column(String, default=UserRole.WORKER.value)
@@ -144,6 +143,7 @@ class WorkerModel(Base):
     business = relationship("BusinessModel", back_populates="workers")
     shift_interests = relationship("ShiftInterestModel", back_populates="worker", cascade="all, delete-orphan")
 
+    # Composite unique constraint for name per business
     __table_args__ = (UniqueConstraint('business_id', 'name', name='_business_worker_name_uc'),)
 
 
@@ -164,7 +164,8 @@ class ShiftModel(Base):
     recurring_weekly = Column(Boolean, default=False)
     weekdays_json = Column(Text, default='[]')
     status = Column(String, default=ShiftStatus.OPEN.value)  # Open or Closed
-    
+    note = Column(Text, default='')  # Custom note for this shift
+
     # Relationships
     business = relationship("BusinessModel", back_populates="shifts")
     shift_interests = relationship("ShiftInterestModel", back_populates="shift", cascade="all, delete-orphan")
@@ -372,6 +373,7 @@ try:
     _ensure_column('workers', 'user_role', "user_role TEXT DEFAULT 'Worker'")
     _ensure_column('shifts', 'business_id', "business_id INTEGER")
     _ensure_column('shifts', 'status', "status TEXT DEFAULT 'Open'")
+    _ensure_column('shifts', 'note', "note TEXT DEFAULT ''")
     _ensure_column('users', 'business_id', "business_id INTEGER")
     _ensure_column('users', 'worker_id', "worker_id INTEGER")
     _ensure_column('businesses', 'unique_number', "unique_number TEXT")
@@ -896,6 +898,9 @@ def add_worker():
         }, 201)
     except Exception as e:
         session.rollback()
+        # Check for unique constraint violation
+        if 'UNIQUE constraint failed' in str(e) or 'duplicate key value violates unique constraint' in str(e):
+            return jsonify({'error': f'A worker with the name "{data.get("name")}" already exists. Please choose a different name.'}), 409
         return jsonify({'error': str(e)}), 400
     finally:
         session.close()
@@ -1095,6 +1100,7 @@ def get_shifts() -> Any:
                 'weekdays': weekdays,
                 'business_id': getattr(s, 'business_id', bid),
                 'status': getattr(s, 'status', ShiftStatus.OPEN.value),
+                'note': getattr(s, 'note', ''),
             })
         return jsonify(shifts_list)
     finally:
@@ -1254,6 +1260,7 @@ def add_shift():
             recurring_weekly=bool(recurring_weekly),
             weekdays_json=_safe_json_dumps(weekdays),
             status=ShiftStatus.OPEN.value,
+            note=data.get('note', '')
         )
         session.add(dbs)
         session.commit()
