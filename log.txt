@@ -1,0 +1,81 @@
+🔄 Starting development server with auto-reload...
+📱 Open your browser to: http://localhost:5000
+🛑 Press Ctrl+C to stop
+
+INFO:root:Generating index.html...
+INFO:root:Starting Flask app...
+ * Serving Flask app 'web_interface'
+ * Debug mode: off
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.103.51.80:5000
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:07:06] "[31m[1mPOST /api/workers HTTP/1.1[0m" 401 -
+ERROR:__main__:An unhandled exception occurred: 405 Method Not Allowed: The method is not allowed for the requested URL.
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/werkzeug/routing/map.py", line 624, in match
+    raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+werkzeug.exceptions.MethodNotAllowed: 405 Method Not Allowed: The method is not allowed for the requested URL.
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:10:10] "[35m[1mGET /api/workers HTTP/1.1[0m" 500 -
+ERROR:__main__:An unhandled exception occurred: 405 Method Not Allowed: The method is not allowed for the requested URL.
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/werkzeug/routing/map.py", line 624, in match
+    raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+werkzeug.exceptions.MethodNotAllowed: 405 Method Not Allowed: The method is not allowed for the requested URL.
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:11:33] "[35m[1mGET /api/workers HTTP/1.1[0m" 500 -
+ERROR:__main__:An unhandled exception occurred: 405 Method Not Allowed: The method is not allowed for the requested URL.
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/werkzeug/routing/map.py", line 624, in match
+    raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+werkzeug.exceptions.MethodNotAllowed: 405 Method Not Allowed: The method is not allowed for the requested URL.
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:12:07] "[35m[1mGET /api/workers HTTP/1.1[0m" 500 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:12:18] "[33mGET /api/workers/ HTTP/1.1[0m" 404 -
+ERROR:__main__:An unhandled exception occurred: 405 Method Not Allowed: The method is not allowed for the requested URL.
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/werkzeug/routing/map.py", line 624, in match
+    raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+werkzeug.exceptions.MethodNotAllowed: 405 Method Not Allowed: The method is not allowed for the requested URL.
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:13:50] "[35m[1mGET /api/workers HTTP/1.1[0m" 500 -
+/bin/sh: line 1:  4231 Terminated: 15          FLASK_ENV=development FLASK_DEBUG=1 python web_interface.py
+make: *** [dev] Error 143

@@ -122,6 +122,9 @@ class UserModel(Base):
     # Relationships
     business = relationship("BusinessModel", back_populates="users")
 
+    # A user's name must be unique within a business
+    __table_args__ = (UniqueConstraint('business_id', 'name', name='_business_user_name_uc'),)
+
 
 class WorkerModel(Base):
     """ORM model for workers. Skills and unavailable_dates stored as JSON text."""
@@ -294,11 +297,12 @@ def _generate_business_number() -> str:
     return uuid.uuid4().hex[:8].upper()
 
 
-def _set_session(business_id: int, business_name: str, user_role: str, user_id: int, worker_id: int | None = None):
+def _set_session(business_id: int, business_name: str, user_role: str, user_id: int, user_name: str, worker_id: int | None = None):
     session['business_id'] = business_id
     session['business_name'] = business_name
     session['user_role'] = user_role
     session['user_id'] = user_id
+    session['user_name'] = user_name
     if worker_id is not None:
         session['worker_id'] = worker_id
 
@@ -384,6 +388,8 @@ from src.solver.core_solver import ShiftSchedulingSolver
 
 # Initialize Flask app
 app = Flask(__name__, template_folder='templates', static_folder='static')
+# ... existing code ...
+
 app.secret_key = 'shift-scheduler-secret-key-change-in-production'
 
 # Data storage (in-memory for now, can be switched to database)
@@ -449,6 +455,7 @@ def setup():
         'setup.html',
         business_name=session.get('business_name'),
         user_role=session.get('user_role'),
+        user_name=session.get('user_name'),
     )
 
 
@@ -463,7 +470,8 @@ def availability():
     return render_template(
         'worker_availability.html',
         business_name=session.get('business_name'),
-        user_role=session.get('user_role')
+        user_role=session.get('user_role'),
+        user_name=session.get('user_name')
     )
 
 
@@ -537,7 +545,7 @@ def register_business():
         db.add(evening_shift)
         db.commit()
 
-        _set_session(int(biz.id), str(biz.name), UserRole.MANAGER.value, int(user.id))  # type: ignore[arg-type]
+        _set_session(int(biz.id), str(biz.name), UserRole.MANAGER.value, int(user.id), str(user.name))  # type: ignore[arg-type]
 
         return jsonify({
             'success': True,
@@ -546,83 +554,68 @@ def register_business():
             'business_number': biz.unique_number,
             'manager_user_id': user.id,
             'join_link': f"/join/{biz.unique_number}"
-        }), 201
+        }, 201)
     except Exception as e:
         db.rollback()
+        if 'UNIQUE constraint failed' in str(e) or 'duplicate key value violates unique constraint' in str(e):
+            return jsonify({'error': f'A user with the name "{manager_name}" already exists in this business. Please choose a different name.'}), 409
         return jsonify({'error': str(e)}), 400
     finally:
         db.close()
 
 
-@app.route('/api/login', methods=['POST'])  # type: ignore[misc]
+@app.route('/api/login', methods=['POST'])
 def login():
     """Login endpoint for existing users."""
     data = request.json or {}
     business_number = data.get('business_number', '').strip().upper()
-    user_name = data.get('user_name', '').strip()
-    
-    if not business_number or not user_name:
-        return jsonify({'error': 'business_number and user_name are required'}), 400
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not ((business_number and username) or (username and password)):
+        return jsonify({'error': 'Provide business number and username, or just username and password'}), 400
 
     db = SessionLocal()
     try:
-        # Find business by number
-        biz = db.query(BusinessModel).filter(
-            BusinessModel.unique_number == business_number
-        ).first()
-        
+        user = None
+        if business_number and username:
+            biz = db.query(BusinessModel).filter(BusinessModel.unique_number == business_number).first()
+            if not biz:
+                return jsonify({'error': 'Business not found'}), 404
+            user = db.query(UserModel).filter(UserModel.business_id == biz.id, UserModel.username == username).first()
+        elif username and password:
+            user = db.query(UserModel).filter_by(username=username).first()
+
+        if not user or not user.check_password(password):
+            return jsonify({'error': 'Invalid credentials'}), 401
+
+        biz = db.query(BusinessModel).filter_by(id=user.business_id).first()
         if not biz:
-            return jsonify({'error': 'Business not found. Check your business number.'}), 404
+            return jsonify({'error': 'Business not found for this user'}), 404
 
-        # Find user in this business
-        user = db.query(UserModel).filter(
-            UserModel.business_id == biz.id,
-            UserModel.name.ilike(user_name)
-        ).first()
+        worker_id = None
+        if user.role == 'worker':
+            worker = db.query(WorkerModel).filter_by(user_id=user.id).first()
+            if worker:
+                worker_id = worker.id
 
-        if not user:
-            return jsonify({'error': f'User "{user_name}" not found in this business.'}), 404
-
-        # If this is a worker, resolve the matching WorkerModel and set worker_id in session.
-        # Prefer direct UserModel.worker_id link; fall back to name-based lookup
-        # for legacy records created before this link existed.
-        worker_id: int | None = None
-        if user.role == UserRole.WORKER.value:
-            if getattr(user, 'worker_id', None) is not None:
-                worker_id = int(user.worker_id)  # type: ignore[arg-type]
-            else:
-                worker = db.query(WorkerModel).filter(
-                    WorkerModel.business_id == biz.id,
-                    WorkerModel.name.ilike(user.name)
-                ).first()
-                if worker is not None:
-                    worker_id = int(worker.id)  # type: ignore[arg-type]
-                    try:
-                        user.worker_id = worker.id
-                        db.add(user)
-                        db.commit()
-                    except Exception:
-                        db.rollback()
-
-        # Set session (include worker_id when available)
-        _set_session(int(biz.id), str(biz.name), user.role, int(user.id), worker_id=worker_id)  # type: ignore[arg-type]
-
-        return jsonify({
-            'success': True,
-            'business_id': biz.id,
-            'business_name': biz.name,
-            'user_id': user.id,
-            'user_name': user.name,
-            'user_role': user.role
-        }), 200
+        _set_session(biz.id, biz.name, user.role, user.id, user.name, worker_id=worker_id)  # type: ignore
+        
+        if user.role == 'manager':
+            return jsonify({"message": "Login successful", "redirect_url": url_for('setup_page')})
+        elif user.role == 'worker':
+            return jsonify({"message": "Login successful", "redirect_url": url_for('worker_availability_page')})
+        else:
+            return jsonify({"error": "Unknown user role"}), 403
     except Exception as e:
         db.rollback()
-        return jsonify({'error': str(e)}), 400
+        logger.error(f"Login error: {e}")
+        return jsonify({'error': 'An internal error occurred during login.'}), 500
     finally:
         db.close()
 
 
-@app.route('/api/logout', methods=['POST'])  # type: ignore[misc]
+@app.route('/api/logout', methods=['POST'])
 def logout():
     """Logout endpoint - clear session."""
     try:
@@ -635,14 +628,14 @@ def logout():
         return jsonify({'error': str(e)}), 400
 
 
-@app.route('/logout', methods=['GET'])  # type: ignore[misc]
+@app.route('/logout', methods=['GET'])
 def logout_page():
     """Logout page - clears session and redirects to login."""
     session.clear()
     return redirect('/')
 
 
-@app.route('/join/<business_number>', methods=['GET'])  # type: ignore[misc]
+@app.route('/join/<business_number>', methods=['GET'])
 def get_join_info(business_number):
     db = SessionLocal()
     try:
@@ -654,7 +647,7 @@ def get_join_info(business_number):
         db.close()
 
 
-@app.route('/join/<business_number>', methods=['POST'])  # type: ignore[misc]
+@app.route('/join/<business_number>', methods=['POST'])
 def join_business(business_number):
     data = request.json or {}
     worker_name = data.get('name') or data.get('worker_name')
@@ -688,7 +681,7 @@ def join_business(business_number):
         db.commit()
         db.refresh(user)
 
-        _set_session(int(biz.id), str(biz.name), UserRole.WORKER.value, int(user.id), worker_id=int(worker.id))  # type: ignore[arg-type]
+        _set_session(biz.id, biz.name, UserRole.WORKER.value, user.id, user.name, worker_id=worker.id)  # type: ignore
 
         return jsonify({
             'success': True,
@@ -696,7 +689,7 @@ def join_business(business_number):
             'business_name': biz.name,
             'worker_id': worker.id,
             'user_id': user.id,
-        }), 201
+        }, 201)
     except Exception as e:
         db.rollback()
         return jsonify({'error': str(e)}), 400
@@ -708,7 +701,7 @@ def join_business(business_number):
 # ROUTES - BUSINESS STATS
 # ============================================================================
 
-@app.route('/api/stats', methods=['GET'])  # type: ignore[misc]
+@app.route('/api/stats', methods=['GET'])  # type: ignore
 def get_stats():
     """Get business statistics (workers, shifts, interests count)."""
     bid, err, code = _require_business()
@@ -726,7 +719,9 @@ def get_stats():
         return jsonify({
             'total_workers': total_workers,
             'total_shifts': total_shifts,
-            'total_interests': total_interests
+            'total_interests': total_interests,
+            'business_id': bid,
+            'business_number': db.query(BusinessModel.unique_number).filter(BusinessModel.id == bid).scalar()
         }), 200
     except Exception as e:
         return jsonify({'error': f'Failed to get stats: {str(e)}'}), 500
@@ -738,7 +733,42 @@ def get_stats():
 # ROUTES - WORKERS MANAGEMENT
 # ============================================================================
 
-@app.route('/api/workers', methods=['GET'])  # type: ignore[misc]
+def worker_to_dto(worker_instance: Any) -> "Worker":
+    """Convert a WorkerModel ORM instance to a Pydantic DTO."""
+    try:
+        preferences_data = _safe_json_loads(worker_instance.preferences_json, {})
+        
+        worker_id = worker_instance.id
+        if 'worker_id' not in preferences_data:
+            preferences_data['worker_id'] = worker_id
+
+        preferences = WorkerPreference(
+            worker_id=worker_id,
+            preferred_shift_types=preferences_data.get('preferred_shift_types', []),
+            unavailable_dates=set(preferences_data.get('unavailable_dates', [])),
+            max_shifts_per_week=preferences_data.get('max_shifts_per_week', 5),
+            min_shifts_per_week=preferences_data.get('min_shifts_per_week', 0),
+            no_consecutive_shifts=preferences_data.get('no_consecutive_shifts', True),
+            prefer_weekends=preferences_data.get('prefer_weekends', False),
+            avoid_weekends=preferences_data.get('avoid_weekends', False)
+        )
+        
+        skills_list = _safe_json_loads(worker_instance.skills_json, [])
+        
+        return Worker(
+            id=worker_instance.id,
+            business_id=worker_instance.business_id,
+            name=worker_instance.name,
+            seniority_level=worker_instance.seniority_level,
+            hourly_rate=worker_instance.hourly_rate,
+            skills=[Skill(name=s) for s in skills_list],
+            preferences=preferences,
+        )
+    except Exception as e:
+        logger.error(f"Failed to convert worker ORM to DTO for worker ID {getattr(worker_instance, 'id', 'N/A')}", exc_info=True)
+        raise
+
+@app.route('/api/workers', methods=['GET'])
 def get_workers() -> Any:
     """Get all workers as JSON."""
     bid, err, code = _require_business()
@@ -769,8 +799,7 @@ def get_workers() -> Any:
     finally:
         db.close()
 
-
-@app.route('/api/workers', methods=['POST'])  # type: ignore[misc]
+@app.route('/api/workers', methods=['POST'])  # type: ignore
 def add_worker():
     """Add a new worker from form data."""
     data = request.json or {}
@@ -787,123 +816,59 @@ def add_worker():
         return err_resp, err_code
 
     provided_staff = data.get('staff_id') or data.get('staffId')
-    session = SessionLocal()
+    db = SessionLocal()
     try:
-        # Determine worker id (use provided staff_id if it's explicitly set and we want to override,
-        # otherwise let DB autoincrement handle it)
-        worker_id_override = None
-        if provided_staff:
-            try:
-                worker_id_override = int(provided_staff)
-            except Exception:
-                return jsonify({'error': 'Invalid staff_id; must be integer'}), 400
-            exists = session.query(WorkerModel).filter(WorkerModel.id == worker_id_override, WorkerModel.business_id == bid).first()
-            if exists:
-                return jsonify({'error': f'staff_id {worker_id_override} already exists'}), 400
+        # Check for duplicate name across both workers and users (managers)
+        existing_worker = db.query(WorkerModel).filter(
+            WorkerModel.business_id == bid,
+            WorkerModel.name.ilike(data['name'])
+        ).first()
+        if existing_worker:
+            return jsonify({'error': f"A worker named '{data['name']}' already exists."}), 409
 
-        # Parse skills
-        skills = []
-        if data.get('skills'):
-            if isinstance(data['skills'], list):
-                skill_items = data['skills']
-            else:
-                skill_items = [s.strip() for s in str(data['skills']).split(',') if s.strip()]
-            for item in skill_items:
-                if isinstance(item, dict):
-                    name = item.get('name') or item.get('skill')
-                    level = item.get('level')
-                    try:
-                        lvl = SkillLevel(level) if level else SkillLevel.INTERMEDIATE
-                    except Exception:
-                        lvl = SkillLevel.INTERMEDIATE
-                    if name:
-                        skills.append({'name': str(name), 'level': lvl.value})
-                else:
-                    skill_name = str(item).strip()
-                    if skill_name:
-                        skills.append({'name': skill_name, 'level': SkillLevel.INTERMEDIATE.value})
+        existing_user = db.query(UserModel).filter(
+            UserModel.business_id == bid,
+            UserModel.name.ilike(data['name'])
+        ).first()
+        if existing_user:
+            return jsonify({'error': f"A user (manager) named '{data['name']}' already exists. Worker names must be unique."}), 409
 
-        # Parse unavailable dates/datetimes (backwards compatible)
-        unavailable_dates = []
-        if data.get('unavailable_dates'):
-            dates = data['unavailable_dates']
-            if isinstance(dates, list):
-                date_strings = dates
-            else:
-                date_strings = [s.strip() for s in str(dates).split(',') if s.strip()]
-            for d in date_strings:
-                if d:
-                    unavailable_dates.append(d)
-
-        # Parse weekly availability (preferred): list of {days:[0..6], start:'HH:MM', end:'HH:MM'}
-        availability = []
-        if data.get('availability'):
-            try:
-                av = data['availability']
-                if isinstance(av, str):
-                    av = json.loads(av)
-                if isinstance(av, list):
-                    for a in av:
-                        # basic normalization
-                        days = a.get('days') if isinstance(a, dict) else None
-                        start = a.get('start') if isinstance(a, dict) else None
-                        end = a.get('end') if isinstance(a, dict) else None
-                        if days and start and end:
-                            availability.append({'days': days, 'start': start, 'end': end})
-            except Exception:
-                availability = []
-
-        # Build preferences dict
-        preferences = {
-            'max_shifts_per_week': int(data.get('max_shifts_per_week', 5)),
-            'min_shifts_per_week': int(data.get('min_shifts_per_week', 0)),
-            'no_consecutive_shifts': bool(data.get('no_consecutive_shifts', True)),
-            'prefer_weekends': bool(data.get('prefer_weekends', False)),
-            'avoid_weekends': bool(data.get('avoid_weekends', False)),
-        }
-
-        # Create DB worker scoped to business
-        worker_kwargs = {
-            'business_id': bid,
-            'name': data['name'],
-            'seniority_level': int(data.get('seniority_level', 1)),
-            'hourly_rate': float(data.get('hourly_rate', 20.0)),
-            'skills_json': _safe_json_dumps(skills),
-            'unavailable_dates_json': _safe_json_dumps(unavailable_dates),
-            'availability_json': _safe_json_dumps(availability),
-            'preferences_json': _safe_json_dumps(preferences),
-            'user_role': data.get('user_role', UserRole.WORKER.value),
-        }
-        if worker_id_override:
-            worker_kwargs['id'] = worker_id_override
-
-        dbw = WorkerModel(**worker_kwargs)
-        session.add(dbw)
-        session.commit()
-        session.refresh(dbw)
-
-        # Also create a user model for this worker so they can log in
-        user = UserModel(
+        new_worker = WorkerModel(
             business_id=bid,
-            name=dbw.name,
-            role=UserRole.WORKER.value
+            name=data['name'],
+            seniority_level=int(data.get('seniority_level', 1)),
+            hourly_rate=float(data.get('hourly_rate', 20.0)),
+            skills_json=_safe_json_dumps(data.get('skills', [])),
+            unavailable_dates_json=_safe_json_dumps(data.get('unavailable_dates', [])),
+            availability_json=_safe_json_dumps(data.get('availability', [])),
+            preferences_json=_safe_json_dumps(data.get('preferences', {})),
+            user_role=UserRole.WORKER.value,
         )
-        session.add(user)
-        session.commit()
+        db.add(new_worker)
+        db.commit()
+        db.refresh(new_worker)  # Ensure the new_worker object is up-to-date with DB data (like ID)
+        
+        try:
+            worker_dto = worker_to_dto(new_worker)
+            return jsonify(worker_dto.model_dump()), 201
+        except Exception as e:
+            logger.error(f"Error converting worker to DTO: {e}", exc_info=True)
+            # Even if DTO conversion fails, the worker was created.
+            # Return a success message but indicate the DTO issue.
+            return jsonify({
+                'message': 'Worker added, but failed to serialize response.',
+                'worker_id': new_worker.id
+            }), 201
 
-        return jsonify({
-            'success': True,
-            'message': f'Worker {data["name"]} added successfully',
-            'worker_id': dbw.id
-        }, 201)
     except Exception as e:
-        session.rollback()
+        db.rollback()
+        logger.error(f"Error adding worker: {e}", exc_info=True)
         # Check for unique constraint violation
         if 'UNIQUE constraint failed' in str(e) or 'duplicate key value violates unique constraint' in str(e):
-            return jsonify({'error': f'A worker with the name "{data.get("name")}" already exists. Please choose a different name.'}), 409
-        return jsonify({'error': str(e)}), 400
+            return jsonify({'error': f"A user or worker with the name '{data['name']}' already exists."}), 409
+        return jsonify({'error': 'An internal error occurred while adding the worker.'}), 500
     finally:
-        session.close()
+        db.close()
 
 
 @app.route('/api/workers/<worker_id>', methods=['GET'])
@@ -1952,6 +1917,7 @@ def run_schedule():
                     session.close()
 
             # For simplicity, save the first solution found
+
             best_solution = response.solutions[0]
 
             session = SessionLocal()

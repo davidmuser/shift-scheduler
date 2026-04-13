@@ -251,6 +251,52 @@ async function loadShifts() {
     }
 }
 
+async function loadBusinessInfo() {
+    try {
+        const response = await fetch('/api/stats');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch stats: ${response.statusText}`);
+        }
+        const stats = await response.json();
+        
+        const statsContainer = document.getElementById('businessStats');
+        if (statsContainer) {
+            statsContainer.innerHTML = `
+                <div class="stat-item">
+                    <span class="stat-value">${stats.total_workers || 0}</span>
+                    <span class="stat-label">Workers</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">${stats.total_shifts || 0}</span>
+                    <span class="stat-label">Shifts</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">${stats.total_interests || 0}</span>
+                    <span class="stat-label">Shift Interests</span>
+                </div>
+            `;
+        }
+
+        const joinLink = document.getElementById('joinLink');
+        const joinUrl = `${window.location.origin}/join/${stats.business_number}`;
+        if (joinLink) {
+            joinLink.href = joinUrl;
+            joinLink.textContent = joinUrl;
+        }
+        const joinInput = document.getElementById('joinLinkInput');
+        if(joinInput) {
+            joinInput.value = joinUrl;
+        }
+
+    } catch (error) {
+        console.error('Error loading business info:', error);
+        const statsContainer = document.getElementById('businessStats');
+        if (statsContainer) {
+            statsContainer.innerHTML = '<p class="error-text">Could not load business stats.</p>';
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 // DELETE & CLEAR ACTIONS (Manager Only)
 // ----------------------------------------------------------------------------

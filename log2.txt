@@ -1,0 +1,169 @@
+🔄 Starting development server with auto-reload...
+📱 Open your browser to: http://localhost:5000
+🛑 Press Ctrl+C to stop
+
+INFO:root:Generating index.html...
+INFO:root:Starting Flask app...
+ * Serving Flask app 'web_interface'
+ * Debug mode: off
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.103.51.80:5000
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:22:11] "[31m[1mGET /api/workers HTTP/1.1[0m" 401 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:23:59] "GET /setup HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:23:59] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:23:59] "GET /static/ui_helpers.js HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:23:59] "[36mGET /static/setup.js HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:00] "GET /api/workers HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:00] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:01] "GET /api/shifts HTTP/1.1" 200 -
+ERROR:__main__:Error converting worker to DTO: Object of type set is not JSON serializable
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py", line 853, in add_worker
+    return jsonify(worker_dto.model_dump()), 201
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/__init__.py", line 170, in jsonify
+    return current_app.json.response(*args, **kwargs)  # type: ignore[return-value]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 214, in response
+    f"{self.dumps(obj, **dump_args)}\n", mimetype=self.mimetype
+       ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 179, in dumps
+    return json.dumps(obj, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py", line 242, in dumps
+    **kw).encode(obj)
+          ~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 202, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 263, in iterencode
+    return _iterencode(o, 0)
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 121, in _default
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+TypeError: Object of type set is not JSON serializable
+when serializing dict item 'unavailable_dates'
+when serializing dict item 'preferences'
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:05] "[35m[1mPOST /api/workers HTTP/1.1[0m" 201 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:05] "GET /api/workers HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:06] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:07] "GET /api/stats HTTP/1.1" 200 -
+ERROR:__main__:Error converting worker to DTO: Object of type set is not JSON serializable
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py", line 853, in add_worker
+    return jsonify(worker_dto.model_dump()), 201
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/__init__.py", line 170, in jsonify
+    return current_app.json.response(*args, **kwargs)  # type: ignore[return-value]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 214, in response
+    f"{self.dumps(obj, **dump_args)}\n", mimetype=self.mimetype
+       ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 179, in dumps
+    return json.dumps(obj, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py", line 242, in dumps
+    **kw).encode(obj)
+          ~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 202, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 263, in iterencode
+    return _iterencode(o, 0)
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 121, in _default
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+TypeError: Object of type set is not JSON serializable
+when serializing dict item 'unavailable_dates'
+when serializing dict item 'preferences'
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:17] "[35m[1mPOST /api/workers HTTP/1.1[0m" 201 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:17] "GET /api/workers HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:18] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:18] "GET /api/stats HTTP/1.1" 200 -
+ERROR:__main__:Error converting worker to DTO: Object of type set is not JSON serializable
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py", line 853, in add_worker
+    return jsonify(worker_dto.model_dump()), 201
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/__init__.py", line 170, in jsonify
+    return current_app.json.response(*args, **kwargs)  # type: ignore[return-value]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 214, in response
+    f"{self.dumps(obj, **dump_args)}\n", mimetype=self.mimetype
+       ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 179, in dumps
+    return json.dumps(obj, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py", line 242, in dumps
+    **kw).encode(obj)
+          ~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 202, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 263, in iterencode
+    return _iterencode(o, 0)
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 121, in _default
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+TypeError: Object of type set is not JSON serializable
+when serializing dict item 'unavailable_dates'
+when serializing dict item 'preferences'
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:58] "[35m[1mPOST /api/workers HTTP/1.1[0m" 201 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:58] "GET /api/workers HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:24:59] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:00] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:04] "[31m[1mPOST /api/workers HTTP/1.1[0m" 409 -
+ERROR:__main__:Error converting worker to DTO: Object of type set is not JSON serializable
+Traceback (most recent call last):
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py", line 853, in add_worker
+    return jsonify(worker_dto.model_dump()), 201
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/__init__.py", line 170, in jsonify
+    return current_app.json.response(*args, **kwargs)  # type: ignore[return-value]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 214, in response
+    f"{self.dumps(obj, **dump_args)}\n", mimetype=self.mimetype
+       ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 179, in dumps
+    return json.dumps(obj, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py", line 242, in dumps
+    **kw).encode(obj)
+          ~~~~~~^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 202, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 263, in iterencode
+    return _iterencode(o, 0)
+  File "/Users/davidbrief/Documents/projects/shift-scheduler/.venv/lib/python3.14/site-packages/flask/json/provider.py", line 121, in _default
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+TypeError: Object of type set is not JSON serializable
+when serializing dict item 'unavailable_dates'
+when serializing dict item 'preferences'
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:17] "[35m[1mPOST /api/workers HTTP/1.1[0m" 201 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:17] "GET /api/workers HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:18] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:19] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:19] "GET /schedule HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:19] "GET /static/schedule.js HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:19] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:19] "GET /api/default-weights HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:20] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:20] "GET /api/published-schedule HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:20] "GET /api/shift-interests HTTP/1.1" 200 -
+/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py:1931: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+  assignments=json.dumps([a.dict() for a in best_solution.assignments])
+/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py:105: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py:106: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  updated_at = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+/Users/davidbrief/Documents/projects/shift-scheduler/web_interface.py:1948: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+  solutions=[s.dict() for s in response.solutions],
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:23] "POST /api/schedule HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:26] "GET /setup HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:26] "[36mGET /static/setup.js HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:26] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:26] "[36mGET /static/setup.js HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:26] "[36mGET /static/ui_helpers.js HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:27] "GET /api/workers HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:28] "GET /api/stats HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:28] "GET /api/shifts HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:30] "[33mPOST /api/clear-all HTTP/1.1[0m" 404 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:33] "[33mPOST /api/clear-all HTTP/1.1[0m" 404 -
+INFO:werkzeug:127.0.0.1 - - [14/Apr/2026 00:25:35] "[33mPOST /api/clear-all HTTP/1.1[0m" 404 -

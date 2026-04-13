@@ -12,12 +12,10 @@
             <div>
                 <h1>{% if user_role == 'Manager' %}👨‍💼 Manager Dashboard{% else %}📅 Your Shifts{% endif %}</h1>
                 {% if business_name %}
-                <p>Business: {{ business_name }} | Role: {{ user_role or 'Unknown' }}</p>
+                <p>Business: {{ business_name }} | Role: {{ user_role or 'Unknown' }} | User: {{ user_name or 'Unknown' }}</p>
                 {% if user_role == 'Manager' %}
                 <div style="font-size: 0.9rem; color: var(--text-muted-color);">
-                    <span>ID: <strong id="setupBusinessId" style="font-family: monospace;">--</strong></span>
-                    <button class="copy-btn-small" onclick="copyToClipboard('setupBusinessId', 'Business ID')" title="Copy Business ID">📋</button>
-                    <span style="margin-left: 1rem;">Number: <strong id="setupBusinessNumber" style="font-family: monospace;">--</strong></span>
+                    <span>Business Number: <strong id="setupBusinessNumber" style="font-family: monospace;">--</strong></span>
                     <button class="copy-btn-small" onclick="copyToClipboard('setupBusinessNumber', 'Business Number')" title="Copy Business Number">📋</button>
                 </div>
                 {% endif %}
@@ -145,6 +143,8 @@
         </main>
     </div>
 
+    <script src="{{ url_for('static', filename='ui_helpers.js') }}"></script>
+    <script src="{{ url_for('static', filename='setup.js') }}"></script>
     <script>
         function copyToClipboard(elementId, entityName) {
             const text = document.getElementById(elementId).textContent;
@@ -156,23 +156,10 @@
             });
         }
 
-        function loadBusinessInfo() {
-            fetch('/api/stats')
-                .then(response => response.json())
-                .then(data => {
-                    const userRole = document.getElementById('sessionContext').dataset.role;
-                    if (userRole === 'Manager') {
-                        document.getElementById('setupBusinessId').textContent = data.business_id;
-                        document.getElementById('setupBusinessNumber').textContent = data.business_number;
-                        document.getElementById('managerWorkerCount').textContent = data.total_workers;
-                        document.getElementById('managerShiftCount').textContent = data.total_shifts;
-                    }
-                })
-                .catch(error => console.error('Error loading business info:', error));
-        }
-
-        document.addEventListener('DOMContentLoaded', loadBusinessInfo);
+        document.addEventListener('DOMContentLoaded', () => {
+            // This is now handled in setup.js, but we can keep a fallback or specific logic here if needed.
+            // For example, loadBusinessInfo() is now in setup.js and called from there.
+        });
     </script>
-    <script src="{{ url_for('static', filename='setup.js') }}"></script>
 </body>
 </html>
