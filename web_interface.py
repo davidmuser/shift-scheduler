@@ -554,7 +554,7 @@ def register_business():
             'business_number': biz.unique_number,
             'manager_user_id': user.id,
             'join_link': f"/join/{biz.unique_number}"
-        }, 201)
+        }), 201
     except Exception as e:
         db.rollback()
         if 'UNIQUE constraint failed' in str(e) or 'duplicate key value violates unique constraint' in str(e):
@@ -569,7 +569,7 @@ def login():
     """Login endpoint for existing users."""
     data = request.json or {}
     business_number = data.get('business_number', '').strip().upper()
-    username = data.get('username', '').strip()
+    username = data.get('username', data.get('user_name', '')).strip()
     password = data.get('password', '')
 
     if not ((business_number and username) or (username and password)):
@@ -582,11 +582,11 @@ def login():
             biz = db.query(BusinessModel).filter(BusinessModel.unique_number == business_number).first()
             if not biz:
                 return jsonify({'error': 'Business not found'}), 404
-            user = db.query(UserModel).filter(UserModel.business_id == biz.id, UserModel.username == username).first()
+            user = db.query(UserModel).filter(UserModel.business_id == biz.id, UserModel.name.ilike(username)).first()
         elif username and password:
-            user = db.query(UserModel).filter_by(username=username).first()
+            user = db.query(UserModel).filter_by(name=username).first()
 
-        if not user or not user.check_password(password):
+        if not user:
             return jsonify({'error': 'Invalid credentials'}), 401
 
         biz = db.query(BusinessModel).filter_by(id=user.business_id).first()
@@ -594,19 +594,17 @@ def login():
             return jsonify({'error': 'Business not found for this user'}), 404
 
         worker_id = None
-        if user.role == 'worker':
-            worker = db.query(WorkerModel).filter_by(user_id=user.id).first()
+        if user.role.lower() == 'worker':
+            worker = db.query(WorkerModel).filter_by(business_id=biz.id, name=user.name).first()
             if worker:
                 worker_id = worker.id
 
         _set_session(biz.id, biz.name, user.role, user.id, user.name, worker_id=worker_id)  # type: ignore
         
-        if user.role == 'manager':
-            return jsonify({"message": "Login successful", "redirect_url": url_for('setup_page')})
-        elif user.role == 'worker':
-            return jsonify({"message": "Login successful", "redirect_url": url_for('worker_availability_page')})
+        if user.role.lower() == 'manager':
+            return jsonify({"success": True, "message": "Login successful", "redirect_url": url_for('setup'), "user_role": "Manager"})
         else:
-            return jsonify({"error": "Unknown user role"}), 403
+            return jsonify({"success": True, "message": "Login successful", "redirect_url": url_for('availability'), "user_role": "Worker"})
     except Exception as e:
         db.rollback()
         logger.error(f"Login error: {e}")
@@ -848,9 +846,15 @@ def add_worker():
         db.commit()
         db.refresh(new_worker)  # Ensure the new_worker object is up-to-date with DB data (like ID)
         
+        # Create a linked UserModel so the worker can log in
+        user = UserModel(name=data['name'], role=UserRole.WORKER.value, business_id=bid, worker_id=new_worker.id)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
         try:
             worker_dto = worker_to_dto(new_worker)
-            return jsonify(worker_dto.model_dump()), 201
+            return jsonify(worker_dto.model_dump(mode='json')), 201
         except Exception as e:
             logger.error(f"Error converting worker to DTO: {e}", exc_info=True)
             # Even if DTO conversion fails, the worker was created.
@@ -1005,6 +1009,11 @@ def delete_worker(worker_id):
         dbw = session.query(WorkerModel).filter(WorkerModel.id == wid, WorkerModel.business_id == bid).first()
         if not dbw:
             return jsonify({'error': 'Worker not found'}), 404
+            
+        # Delete associated UserModel if it exists
+        user_to_delete = session.query(UserModel).filter_by(worker_id=dbw.id).first()
+        if user_to_delete:
+            session.delete(user_to_delete)
         
         # Delete the worker and cascade delete related records
         session.delete(dbw)
