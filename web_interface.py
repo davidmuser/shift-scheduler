@@ -450,10 +450,20 @@ def setup():
     # Redirect workers to availability page
     if session.get('user_role') == UserRole.WORKER.value:
         return redirect('/availability')
+        
+    db = SessionLocal()
+    business_number = '--'
+    try:
+        biz = db.query(BusinessModel).filter_by(id=session.get('business_id')).first()
+        if biz:
+            business_number = biz.unique_number
+    finally:
+        db.close()
     
     return render_template(
         'setup.html',
         business_name=session.get('business_name'),
+        business_number=business_number,
         user_role=session.get('user_role'),
         user_name=session.get('user_name'),
     )

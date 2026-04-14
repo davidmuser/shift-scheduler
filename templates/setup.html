@@ -15,7 +15,7 @@
                 <p>Business: {{ business_name }} | Role: {{ user_role or 'Unknown' }} | User: {{ user_name or 'Unknown' }}</p>
                 {% if user_role == 'Manager' %}
                 <div style="font-size: 0.9rem; color: var(--text-muted-color);">
-                    <span>Business Number: <strong id="setupBusinessNumber" style="font-family: monospace;">--</strong></span>
+                    <span>Business Number: <strong id="setupBusinessNumber" style="font-family: monospace;">{{ business_number or '--' }}</strong></span>
                     <button class="copy-btn-small" onclick="copyToClipboard('setupBusinessNumber', 'Business Number')" title="Copy Business Number">📋</button>
                 </div>
                 {% endif %}
