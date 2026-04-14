@@ -14,10 +14,12 @@
                 <p>Create the optimal schedule for your team</p>
                 {% if business_name %}
                 <div class="chip">Business: {{ business_name }} • Role: {{ user_role or 'Unknown' }}</div>
+                {% if user_role == 'Manager' %}
                 <div class="business-id-display">
-                    🆔 Business ID: <span id="scheduleBusinessId" class="business-id-value">--</span>
-                    <button class="copy-btn-small" onclick="copyScheduleBusinessId()" title="Copy Business ID">📋 Copy</button>
+                    <span>Business Number: <strong id="scheduleBusinessId" class="business-id-value" style="font-family: monospace;">--</strong></span>
+                    <button class="copy-btn-small" onclick="copyScheduleBusinessId()" title="Copy Business Number">📋 Copy</button>
                 </div>
+                {% endif %}
                 {% endif %}
             </div>
             <nav class="action-section">
@@ -175,27 +177,30 @@
     </div>
     
     <script>
-        // Copy business ID to clipboard
+        // Copy business number to clipboard
         function copyScheduleBusinessId() {
             const businessId = document.getElementById('scheduleBusinessId').textContent;
             navigator.clipboard.writeText(businessId).then(() => {
-                alert('Business ID copied to clipboard!');
+                alert('Business Number copied to clipboard!');
             }).catch(err => {
                 console.error('Failed to copy:', err);
             });
         }
         
-        // Load business ID from stats endpoint
+        // Load business number from stats endpoint
         function loadScheduleBusinessId() {
             fetch('/api/stats')
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('scheduleBusinessId').textContent = data.business_id;
+                    const idElement = document.getElementById('scheduleBusinessId');
+                    if (idElement) {
+                        idElement.textContent = data.business_number;
+                    }
                 })
-                .catch(error => console.error('Error loading business ID:', error));
+                .catch(error => console.error('Error loading business number:', error));
         }
         
-        // Load business ID on page load
+        // Load business number on page load
         loadScheduleBusinessId();
     </script>
     <script src="{{ url_for('static', filename='schedule.js') }}"></script>

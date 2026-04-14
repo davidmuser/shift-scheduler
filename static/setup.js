@@ -15,9 +15,14 @@ document.addEventListener('DOMContentLoaded', () => {
             shiftForm.addEventListener('submit', handleShiftFormSubmit);
         }
 
-        const clearAllBtn = document.getElementById('clearAllBtn');
-        if (clearAllBtn) {
-            clearAllBtn.addEventListener('click', handleClearAll);
+        const clearShiftsBtn = document.getElementById('clearShiftsBtn');
+        if (clearShiftsBtn) {
+            clearShiftsBtn.addEventListener('click', handleClearShifts);
+        }
+
+        const clearWorkersBtn = document.getElementById('clearWorkersBtn');
+        if (clearWorkersBtn) {
+            clearWorkersBtn.addEventListener('click', handleClearWorkers);
         }
     }
 
@@ -349,26 +354,49 @@ async function deleteShift(shiftId) {
     }
 }
 
-async function handleClearAll() {
+async function handleClearShifts() {
     const confirmed = await showConfirmDialog({
-        title: 'Clear All Data',
-        details: { 'Warning': 'This will permanently delete ALL workers and shifts. This action cannot be undone.' },
-        confirmText: 'Clear All',
+        title: 'Delete All Shifts',
+        details: { 'Warning': 'This will permanently delete ALL shifts and schedules. This action cannot be undone.' },
+        confirmText: 'Delete Shifts',
         confirmClass: 'btn-danger'
     });
 
     if (!confirmed) return;
 
     try {
-        const response = await fetch('/api/clear-all', { method: 'POST' });
-        if (!response.ok) throw new Error('Failed to clear data.');
+        const response = await fetch('/api/clear-shifts', { method: 'POST' });
+        if (!response.ok) throw new Error('Failed to clear shifts.');
 
-        showNotification('All data has been cleared.', 'success');
+        showNotification('All shifts have been deleted.', 'success');
         await loadInitialData();
         loadBusinessInfo();
     } catch (error) {
         showNotification(error.message, 'error');
-        console.error('Error clearing data:', error);
+        console.error('Error clearing shifts:', error);
+    }
+}
+
+async function handleClearWorkers() {
+    const confirmed = await showConfirmDialog({
+        title: 'Delete All Workers',
+        details: { 'Warning': 'This will permanently delete ALL workers (except managers). This action cannot be undone.' },
+        confirmText: 'Delete Workers',
+        confirmClass: 'btn-danger'
+    });
+
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch('/api/clear-workers', { method: 'POST' });
+        if (!response.ok) throw new Error('Failed to clear workers.');
+
+        showNotification('All workers have been deleted.', 'success');
+        await loadInitialData();
+        loadBusinessInfo();
+    } catch (error) {
+        showNotification(error.message, 'error');
+        console.error('Error clearing workers:', error);
     }
 }
 

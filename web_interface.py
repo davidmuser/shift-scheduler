@@ -298,6 +298,7 @@ def _generate_business_number() -> str:
 
 
 def _set_session(business_id: int, business_name: str, user_role: str, user_id: int, user_name: str, worker_id: int | None = None):
+    session.permanent = True
     session['business_id'] = business_id
     session['business_name'] = business_name
     session['user_role'] = user_role
@@ -390,7 +391,8 @@ from src.solver.core_solver import ShiftSchedulingSolver
 app = Flask(__name__, template_folder='templates', static_folder='static')
 # ... existing code ...
 
-app.secret_key = 'shift-scheduler-secret-key-change-in-production'
+app.secret_key = os.environ.get('SECRET_KEY', 'shift-scheduler-secret-key-change-in-production')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=12)
 
 # Data storage (in-memory for now, can be switched to database)
 """
@@ -430,13 +432,9 @@ def index():
 
 @app.route('/login')
 def login_page():
-    """Login page."""
-    # If user is already logged in, redirect based on role
-    if session.get('business_id'):
-        if session.get('user_role') == UserRole.MANAGER.value:
-            return redirect('/setup')
-        else:
-            return redirect('/availability')
+    """Login page. Clears session to ensure a fresh start."""
+    # If the user explicitly navigates to /login, log them out
+    session.clear()
     return render_template('login.html')
 
 
@@ -733,6 +731,69 @@ def get_stats():
         }), 200
     except Exception as e:
         return jsonify({'error': f'Failed to get stats: {str(e)}'}), 500
+    finally:
+        db.close()
+
+
+@app.route('/api/clear-shifts', methods=['POST'])  # type: ignore[misc]
+def clear_shifts_data():
+    """Clear all shifts, interests, and schedules for the business (Manager only)."""
+    bid, err, code = _require_business()
+    if err:
+        return err, code
+
+    ok, err_resp, err_code = _require_role(UserRole.MANAGER.value)
+    if not ok:
+        return err_resp, err_code
+
+    db = SessionLocal()
+    try:
+        # Delete PublishedSchedules
+        db.query(PublishedScheduleModel).filter(PublishedScheduleModel.business_id == bid).delete()
+        # Delete Schedules
+        db.query(ScheduleModel).filter(ScheduleModel.business_id == bid).delete()
+        # Delete ShiftInterests
+        db.query(ShiftInterestModel).filter(ShiftInterestModel.business_id == bid).delete()
+        # Delete Shifts
+        db.query(ShiftModel).filter(ShiftModel.business_id == bid).delete()
+        
+        db.commit()
+        return jsonify({'success': True, 'message': 'All shifts have been deleted.'}), 200
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in clear-shifts: {e}")
+        return jsonify({'error': 'Failed to clear shifts.'}), 500
+    finally:
+        db.close()
+
+
+@app.route('/api/clear-workers', methods=['POST'])  # type: ignore[misc]
+def clear_workers_data():
+    """Clear all workers (except managers) for the business (Manager only)."""
+    bid, err, code = _require_business()
+    if err:
+        return err, code
+
+    ok, err_resp, err_code = _require_role(UserRole.MANAGER.value)
+    if not ok:
+        return err_resp, err_code
+
+    db = SessionLocal()
+    try:
+        # Delete Users (only workers)
+        db.query(UserModel).filter(
+            UserModel.business_id == bid,
+            UserModel.role == UserRole.WORKER.value
+        ).delete()
+        # Delete Workers
+        db.query(WorkerModel).filter(WorkerModel.business_id == bid).delete()
+        
+        db.commit()
+        return jsonify({'success': True, 'message': 'All workers have been deleted.'}), 200
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in clear-workers: {e}")
+        return jsonify({'error': 'Failed to clear workers.'}), 500
     finally:
         db.close()
 
